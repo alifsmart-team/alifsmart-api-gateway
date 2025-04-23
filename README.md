@@ -8,3 +8,5 @@
 - Caching
 - Auth Centralized
 
+ # database :
+ - gateway_db (redis)
