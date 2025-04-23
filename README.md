@@ -1,6 +1,10 @@
 # alifsmart-api-gateway
 
 # function :
-- Central Routing Request
+- Single Entry Point
+- Routing
 - Load Balancing
+- Rate Limiting
+- Caching
+- Auth Centralized
 
