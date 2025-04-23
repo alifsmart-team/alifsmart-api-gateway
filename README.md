@@ -1,6 +1,6 @@
 # alifsmart-api-gateway
 
-# this service ran a function as :
+# function :
 - Central Routing Request
 - Load Balancing
 
