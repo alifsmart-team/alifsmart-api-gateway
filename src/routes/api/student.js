@@ -1,0 +1,1 @@
+// Proxy route -> alifsmart-student-service
