@@ -1,0 +1,56 @@
+version: '3.8'
+
+services:
+  api-gateway:
+    image: vitoackerman/alifsmart-api-gateway:latest # Pertimbangkan pake tag spesifik, bukan latest
+    ports:
+      - "80:3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      REDIS_HOST: ${REDIS_HOST} # Di-inject pas 'docker stack deploy' atau dari CI/CD
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_TLS_ENABLED: ${REDIS_TLS_ENABLED}
+      # Path ke file secret di dalam container
+      REDIS_PASSWORD_FILE: /run/secrets/redis_password_value 
+      JWT_SECRET_FILE: /run/secrets/jwt_secret_value
+      # URL Service (Pastikan nama service sudah benar)
+      AUTH_SERVICE_URL: http://auth-service:3001 
+      STUDENT_SERVICE_URL: http://student-service:3002
+      TEACHER_SERVICE_URL: http://teacher-service:3003
+      NOTIFICATION_SERVICE_URL: http://notification-service:3004
+      PAYMENT_SERVICE_URL: http://payment-service:3005
+      CONTENT_SERVICE_URL: http://content-service:3006
+      ATTENDANCE_SERVICE_URL: http://attendance-service:3007
+      ANALYTICS_SERVICE_URL: http://analytics-service:3008
+    secrets: # Ini daftar secret yang akan di-MOUNT ke container service ini
+      - source: redis_pass # Nama secret yang ADA DI DOCKER SWARM
+        target: redis_password_value    # Nama file yang akan dibuat di /run/secrets/ di dalam container
+                                        # Hindari nama yang sama dengan source biar gak bingung
+      - source: jwt_secret    # Nama secret yang ADA DI DOCKER SWARM
+        target: jwt_secret_value        # Nama file di /run/secrets/jwt_secret_value
+    networks:
+      - alifsmart_net
+    deploy: # ... (blok deploy lo udah oke) ...
+      replicas: 2
+      update_config:
+        parallelism: 1
+        delay: 10s
+      restart_policy:
+        condition: on-failure
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.api-gateway.rule=Host(`api.alifsmart.dev`)"
+        - "traefik.http.services.api-gateway.loadbalancer.server.port=3000"
+
+networks:
+  alifsmart_net:
+    external: true
+
+# Definisi secrets yang digunakan oleh stack ini (DI LUAR services:)
+# Ini memberitahu Swarm bahwa secret ini harus sudah ada (external: true)
+secrets:
+  redis_pass: # Nama secret yang HARUS SUDAH ADA di Docker Swarm
+    external: true
+  jwt_secret:    # Nama secret yang HARUS SUDAH ADA di Docker Swarm
+    external: true

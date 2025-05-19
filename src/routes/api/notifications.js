@@ -1,1 +1,0 @@
-// Proxy route -> alifsmart-notifications-service

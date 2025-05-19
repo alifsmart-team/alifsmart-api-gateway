@@ -1,1 +1,0 @@
-// Proxy route -> alifsmart-auth-service
