@@ -13,19 +13,19 @@ pipeline {
         DOCKER_IMAGE_NAME = 'alifsmart-api-gateway'
 
         // ID Kredensial Redis dari Jenkins (Ganti dengan ID yang benar)
-        ENV_REDIS_HOST = credentials('redis_host_id_anda')
-        ENV_REDIS_PORT = credentials('redis_port_id_anda')
-        ENV_REDIS_TLS_ENABLED = credentials('redis_tls_enabled_id_anda')
+        ENV_REDIS_HOST = credentials('redis_host')
+        ENV_REDIS_PORT = credentials('redis_port')
+        ENV_REDIS_TLS_ENABLED = credentials('redis_tls_is_enabled')
 
         // Detail Swarm Manager & ID Kredensial SSH (Ganti dengan ID yang benar)
-        SWARM_MANAGER_SSH_CREDENTIALS_ID = 'swarm_manager_ssh_key_id_anda'
+        SWARM_MANAGER_SSH_CREDENTIALS_ID = 'ssh_credential_id'
         SWARM_MANAGER_IP = '47.84.46.116' // IP Server 1 Swarm Manager Anda
         
         // ID Kredensial Docker Hub (Ganti dengan ID yang benar)
-        DOCKER_HUB_CREDENTIALS_ID = 'docker_hub_login_id_anda'
+        DOCKER_HUB_CREDENTIALS_ID = 'docker_credential_id'
 
         // ID Kredensial GitHub PAT (Ganti dengan ID yang benar)
-        GITHUB_CREDENTIALS_ID = 'github_pat_id_anda'
+        GITHUB_CREDENTIALS_ID = 'github_pat'
     }
 
     stages {
