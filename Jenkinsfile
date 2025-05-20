@@ -47,7 +47,7 @@ pipeline {
                 // Menggunakan kredensial GitHub yang telah ditentukan di environment
                 git branch: 'main',
                     credentialsId: env.GITHUB_CREDENTIALS_ID, // Mengambil dari environment variable
-                    url: 'https://github.com/m4yestik/alifsmart-api-gateway.git'
+                    url: 'https://github.com/alifsmart-team/alifsmart-api-gateway.git'
                 echo "Checkout complete."
             }
         }
