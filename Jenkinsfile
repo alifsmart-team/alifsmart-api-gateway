@@ -6,7 +6,7 @@ pipeline {
         // Pastikan 'Default' adalah nama instalasi Git yang dikonfigurasi
         // di Manage Jenkins > Tools (atau Global Tool Configuration)
         // Jika Anda menamakannya lain (misal: 'Git_Lokal'), sesuaikan di sini.
-        git 'Default'
+        git 'Git'
     }
 
     environment {
