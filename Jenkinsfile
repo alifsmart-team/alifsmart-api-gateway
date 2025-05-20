@@ -58,7 +58,6 @@ pipeline {
                               usernameVariable: 'SSH_USERNAME' // Variabel Jenkins yang nyimpen username dari credential (akan jadi 'root')
                           )]) {
             script {
-<<<<<<< HEAD
                 echo "Pipeline finished. Starting cleanup (optional)..."
                 def imageBaseName = "${DOCKER_HUB_USERNAME}/${DOCKER_IMAGE_NAME}"
                 def imageWithBuildTag = "${imageBaseName}:${env.BUILD_ID}"
@@ -78,45 +77,6 @@ pipeline {
         failure {
             echo "Waduh, pipeline gagal nih, bos! Cek lognya buruan, ada yang gak beres."
             // Notifikasi error
-=======
-              def remoteLogin = "${env.SSH_USERNAME}@${SWARM_MANAGER_IP}" // Jadi "root@47.84.46.116"
-              def remoteStackPath = "/opt/stacks/alifsmart-api-gateway" // Path di server Swarm buat nyimpen stack file
-              def stackFileNameOnRepo = "api-gateway-stack.yml" // Nama stack file di repo (pastikan ada di workspace)
-              def stackNameInSwarm = "alifsmart_apigw"
-
-              echo "Preparing remote directory ${remoteStackPath} on ${remoteLogin}..."
-              // PERHATIAN KEAMANAN: Opsi -o StrictHostKeyChecking=no dan -o UserKnownHostsFile=/dev/null
-              // mem-bypass host key checking. Ini memiliki implikasi keamanan (risiko Man-in-the-Middle).
-              // Cara lebih aman: tambahkan host key server target (47.84.46.116) ke known_hosts Jenkins agent,
-              // atau kelola via fitur "Known Hosts Management" jika tersedia di Jenkins.
-              sh "ssh -i ${env.SSH_PRIVATE_KEY_FILE} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${remoteLogin} \"mkdir -p ${remoteStackPath}\""
-
-              echo "Copying ${stackFileNameOnRepo} to ${remoteLogin}:${remoteStackPath}/${stackFileNameOnRepo}..."
-              // Pastikan file stackFileNameOnRepo (api-gateway-stack.yml) ada di root workspace Jenkins
-              sh "scp -i ${env.SSH_PRIVATE_KEY_FILE} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ./${stackFileNameOnRepo} ${remoteLogin}:${remoteStackPath}/${stackFileNameOnRepo}"
-
-              echo "Deploying stack ${stackNameInSwarm} on Swarm Manager ${remoteLogin}..."
-              // Perintah SSH untuk deploy. Variabel environment Jenkins (ENV_REDIS_HOST, dll.)
-              // akan di-substitute di sini SEBELUM dikirim ke remote server.
-              // Docker stack deploy akan menggunakan variabel ini untuk substitusi di dalam stack file.
-              // Pastikan api-gateway-stack.yml menggunakan placeholder seperti ${ENV_REDIS_HOST}.
-              // Untuk kredensial sensitif (password, jwt secret), stack file HARUS merujuk ke Docker Secrets Swarm.
-              sh """
-              ssh -i ${env.SSH_PRIVATE_KEY_FILE} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${remoteLogin} \\
-              "export ENV_REDIS_HOST='${env.ENV_REDIS_HOST}' && \\
-              export ENV_REDIS_PORT='${env.ENV_REDIS_PORT}' && \\
-              export ENV_REDIS_TLS_ENABLED='${env.ENV_REDIS_TLS_ENABLED}' && \\
-              echo 'Attempting to deploy stack ${stackNameInSwarm}...' && \\
-              docker stack deploy \\
-              -c ${remoteStackPath}/${stackFileNameOnRepo} \\
-              ${stackNameInSwarm} \\
-              --with-registry-auth"
-              """
-            }
-
-          }
-
->>>>>>> cdc55232d026cdd89e4f8a18d99b0692c5699776
         }
       }
 
