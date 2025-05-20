@@ -42,7 +42,9 @@ pipeline {
         stage('Install Dependencies & Test') {
             steps {
                 echo "Installing dependencies and running tests inside Docker..."
-                // Gunakan ${PWD} untuk path saat ini di PowerShell
+                // Menggunakan PowerShell untuk menjalankan perintah docker run
+                // Bagian sh -c "..." di dalam container tetap karena container adalah Linux (node:18-alpine)
+                // ${PWD} adalah cara PowerShell untuk mendapatkan direktori kerja saat ini (mirip $(pwd) di bash)
                 powershell 'docker run --rm -v "${PWD}:/app" -w /app node:18-alpine sh -c "npm ci && npm run test -- --passWithNoTests"'
                 echo "Dependencies installed and tests completed."
             }
@@ -55,41 +57,25 @@ pipeline {
                     def fullImageNameForScan = "${DOCKER_HUB_USERNAME}/${DOCKER_IMAGE_NAME}:scan-${env.BUILD_NUMBER}"
 
                     echo "Building temporary image for scan: ${fullImageNameForScan}"
+                    // docker.build() sudah lintas platform
                     docker.withRegistry('https://index.docker.io/v1/', DOCKER_HUB_CREDENTIALS_ID) {
                         def scanImage = docker.build(fullImageNameForScan, "-f Dockerfile .")
                     }
                     
-                    echo "Scanning image ${fullImageNameForScan} for vulnerabilities using Docker..."
-                    // Menggunakan powershell untuk menjalankan Trivy via Docker
-                    // Menambahkan --ignore-ids untuk CVE spesifik cross-spawn
-                    def trivyCommand = "docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image"
-                    def trivyOptions = "--exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed --ignore-ids CVE-2024-21538" // <-- CVE cross-spawn diabaikan
+                    echo "Scanning image ${fullImageNameForScan} for vulnerabilities..."
+                    // Menggunakan powershell untuk menjalankan Trivy.
+                    // Asumsikan 'trivy.exe' ada di PATH Windows Anda atau Anda menjalankan Trivy via Docker.
+                    def trivyScanCommand = "trivy image --exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed --ignore-ids CVE-2024-21538 ${fullImageNameForScan}"
+                    // Jika Trivy via Docker:
+                    // trivyScanCommand = "docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image --exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed --ignore-ids CVE-2024-21538 ${fullImageNameForScan}"
                     
                     try {
-                        powershell "${trivyCommand} ${trivyOptions} ${fullImageNameForScan}"
+                        powershell trivyScanCommand
                         echo "Trivy scan passed or ignored vulnerabilities did not cause failure."
                     } catch (err) {
-                        // Tangani error jika Trivy gagal karena alasan lain, atau jika masih ada CRITICAL/HIGH lain yang tidak diabaikan
                         echo "Trivy scan failed or found unignored CRITICAL/HIGH vulnerabilities. Error: ${err.getMessage()}"
-                        // Anda bisa memilih untuk menggagalkan pipeline di sini jika mau
-                        // currentBuild.result = 'FAILURE' // Uncomment jika ingin tetap gagal jika ada error lain dari trivy
-                        // error("Trivy scan found unignored CRITICAL/HIGH vulnerabilities or an error occurred.") // Uncomment untuk menghentikan pipeline
-                        // Untuk sekarang, kita biarkan pipeline lanjut meskipun Trivy gagal karena error non-0 (selain CVE yg diabaikan)
-                        // Jika Anda ingin pipeline tetap lolos meskipun ada CRITICAL/HIGH lain, maka jangan set --exit-code 1
-                        // atau tangani error di sini agar tidak menggagalkan stage.
-                        // Karena kita masih menggunakan --exit-code 1, jika ada CRITICAL/HIGH LAIN yang tidak diabaikan, stage akan tetap gagal.
-                        // Blok catch ini lebih untuk menangani jika perintah trivy itu sendiri gagal (bukan karena vulnerabilities).
-                        // Jika Anda ingin pipeline SELALU lolos dari tahap scan ini, hilangkan --exit-code 1 dari trivyOptions.
-                        // Atau, jika ingin gagal HANYA jika ada CRITICAL (dan mengizinkan HIGH yg tidak diabaikan), ubah --severity menjadi CRITICAL saja.
-                        // Untuk sekarang, kita asumsikan Anda ingin tetap gagal jika ada CRITICAL/HIGH LAIN.
-                        // Jika Trivy keluar dengan kode 1 KARENA menemukan vuln yg tidak di-ignore, maka err akan berisi pesan itu.
-                        // Jika Anda ingin stage ini TIDAK PERNAH GAGAL, maka jangan gunakan --exit-code 1.
-                        // Untuk tujuan "skip cross-spawn", --ignore-ids sudah cukup.
-                        // Jika --exit-code 1 masih menyebabkan pipeline gagal karena vuln lain, dan Anda ingin skip SEMUA,
-                        // maka hapus --exit-code 1.
-                        
-                        // Jika Anda ingin pipeline GAGAL jika ada error dari trivy (selain temuan vuln yg di-ignore), maka:
-                        // throw err
+                        // Pertimbangkan untuk menggagalkan pipeline di sini jika ada temuan serius yang tidak diabaikan:
+                        // error("Trivy scan found unignored CRITICAL/HIGH vulnerabilities.")
                     }
                     
                     echo "Cleaning up scan image (optional)..."
@@ -111,6 +97,7 @@ pipeline {
                     def imageWithBuildTag = "${imageBaseName}:${env.BUILD_NUMBER}"
                     def imageWithLatestTag = "${imageBaseName}:latest"
 
+                    // Langkah-langkah Docker Pipeline sudah lintas platform
                     docker.withRegistry('https://index.docker.io/v1/', DOCKER_HUB_CREDENTIALS_ID) {
                         echo "Building image ${imageWithBuildTag}..."
                         def customImage = docker.build(imageWithBuildTag, "-f Dockerfile .")
@@ -134,8 +121,8 @@ pipeline {
                 echo "Preparing to deploy to Docker Swarm..."
                 withCredentials([sshUserPrivateKey(
                     credentialsId: SWARM_MANAGER_SSH_CREDENTIALS_ID,
-                    keyFileVariable: 'SSH_PRIVATE_KEY_FILE',    // Jenkins menyediakan path ke file kunci privat sementara
-                    usernameVariable: 'SSH_USERNAME'         // Jenkins menyediakan username dari kredensial
+                    keyFileVariable: 'SSH_PRIVATE_KEY_FILE',
+                    usernameVariable: 'SSH_USERNAME'
                 )]) {
                     script {
                         def remoteLogin = "${env.SSH_USERNAME}@${SWARM_MANAGER_IP}"
@@ -143,37 +130,38 @@ pipeline {
                         def stackFileNameInRepo = "api-gateway-stack.yml" 
                         def stackNameInSwarm = "alifsmart_apigw"
 
-                        // Membuat direktori di server remote jika belum ada
-                        // Menggunakan powershell untuk memanggil ssh.exe
-                        // Path ke file kunci privat akan ada di env.SSH_PRIVATE_KEY_FILE
-                        // Untuk UserKnownHostsFile=/dev/null di Windows, alternatifnya adalah menonaktifkannya dengan cara lain
-                        // atau menggunakan $null jika PowerShell menginterpretasikannya. Untuk kesederhanaan,
-                        // kita bisa mencoba tanpa UserKnownHostsFile atau menggunakan nul jika ssh.exe mendukungnya.
-                        // Cara paling aman adalah menambahkan host key ke known_hosts Windows atau Jenkins.
-                        powershell "ssh -i \"${env.SSH_PRIVATE_KEY_FILE}\" -o StrictHostKeyChecking=no -o UserKnownHostsFile=nul ${remoteLogin} \"mkdir -p ${remoteStackPath}\""
+                        // Menggunakan powershell untuk memanggil ssh.exe dan scp.exe
+                        // Path ke file kunci privat dari Jenkins Credentials
+                        def sshKeyPath = env.SSH_PRIVATE_KEY_FILE 
+                        // Opsi untuk SSH dan SCP (UserKnownHostsFile=nul mungkin bekerja untuk ssh.exe dari Git for Windows)
+                        def sshOptions = "-i \`"${sshKeyPath}\`" -o StrictHostKeyChecking=no -o UserKnownHostsFile=nul"
+
+                        echo "Creating remote directory ${remoteStackPath} on ${remoteLogin}..."
+                        powershell "ssh ${sshOptions} ${remoteLogin} \`"mkdir -p ${remoteStackPath}\`""
                         
-                        // Menyalin file stack dari workspace Jenkins ke server remote
-                        powershell "scp -i \"${env.SSH_PRIVATE_KEY_FILE}\" -o StrictHostKeyChecking=no -o UserKnownHostsFile=nul .\\${stackFileNameInRepo} ${remoteLogin}:${remoteStackPath}/${stackFileNameInRepo}"
+                        echo "Copying ${stackFileNameInRepo} to ${remoteLogin}:${remoteStackPath}/${stackFileNameInRepo}..."
+                        // Menggunakan .\\ untuk path relatif di Windows untuk scp
+                        powershell "scp ${sshOptions} .\\${stackFileNameInRepo} ${remoteLogin}:${remoteStackPath}/${stackFileNameInRepo}"
                         
                         echo "Deploying stack ${stackNameInSwarm} on Swarm Manager ${remoteLogin}..."
-                        // Perintah deployCommand akan dieksekusi di shell Linux remote server, jadi sintaks export dll. tetap
-                        def deployCommand = """
-                        export DOCKER_HUB_USERNAME='${DOCKER_HUB_USERNAME}' && \\
-                        export DOCKER_IMAGE_NAME='${DOCKER_IMAGE_NAME}' && \\
-                        export IMAGE_TAG='latest' && \\
-                        export ENV_REDIS_HOST='${env.ENV_REDIS_HOST}' && \\
-                        export ENV_REDIS_PORT='${env.ENV_REDIS_PORT}' && \\
-                        export ENV_REDIS_TLS_ENABLED='${env.ENV_REDIS_TLS_ENABLED}' && \\
-                        echo 'Deploying stack ${stackNameInSwarm} with image ${DOCKER_HUB_USERNAME}/${DOCKER_IMAGE_NAME}:latest...' && \\
+                        def deployCommandOnRemote = """
+                        export DOCKER_HUB_USERNAME='${DOCKER_HUB_USERNAME}'; \\
+                        export DOCKER_IMAGE_NAME='${DOCKER_IMAGE_NAME}'; \\
+                        export IMAGE_TAG='latest'; \\
+                        export ENV_REDIS_HOST='${env.ENV_REDIS_HOST}'; \\
+                        export ENV_REDIS_PORT='${env.ENV_REDIS_PORT}'; \\
+                        export ENV_REDIS_TLS_ENABLED='${env.ENV_REDIS_TLS_ENABLED}'; \\
+                        echo 'Deploying stack ${stackNameInSwarm} with image ${DOCKER_HUB_USERNAME}/${DOCKER_IMAGE_NAME}:latest...'; \\
                         docker stack deploy \\
                             -c ${remoteStackPath}/${stackFileNameInRepo} \\
                             ${stackNameInSwarm} \\
                             --with-registry-auth
                         """
-                        // Menggunakan powershell untuk memanggil ssh.exe dengan perintah multi-baris
-                        // Perlu escape karakter khusus PowerShell jika ada di dalam deployCommand,
-                        // tapi karena deployCommand adalah string Groovy yang akan dieksekusi di remote, ini seharusnya aman.
-                        powershell "ssh -i \"${env.SSH_PRIVATE_KEY_FILE}\" -o StrictHostKeyChecking=no -o UserKnownHostsFile=nul ${remoteLogin} \"${deployCommand}\""
+                        // Saat memanggil perintah multi-baris via ssh di PowerShell,
+                        // lebih aman jika perintah tersebut tidak mengandung karakter yang perlu di-escape khusus oleh PowerShell.
+                        // String Groovy di atas akan dievaluasi menjadi satu string panjang.
+                        // Tanda kutip ganda di sekitar "${deployCommandOnRemote}" memastikan variabel Groovy diekspansi.
+                        powershell "ssh ${sshOptions} ${remoteLogin} \"${deployCommandOnRemote}\""
                         echo "Deployment to Docker Swarm initiated."
                     }
                 }
