@@ -22,6 +22,7 @@
   "homepage": "https://github.com/alifsmart-team/alifsmart-api-gateway#readme",
   "dependencies": {
     "cors": "^2.8.5",
+    "cross-spawn": "^7.0.6",
     "dotenv": "^16.5.0",
     "express": "^5.1.0",
     "express-http-proxy": "^2.1.1",
@@ -35,7 +36,7 @@
     "node-fetch": "^3.3.2",
     "rate-limit-redis": "^4.2.0",
     "rate-limiter-flexible": "^7.1.0",
-    "redis": "^5.0.1"
+    "redis": "^5.1.0"
   },
   "devDependencies": {
     "jest": "^29.7.0",
