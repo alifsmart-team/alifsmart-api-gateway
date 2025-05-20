@@ -59,11 +59,18 @@ pipeline {
                         def scanImage = docker.build(fullImageNameForScan, "-f Dockerfile .")
                     }
                     
-                    echo "Scanning image ${fullImageNameForScan} for vulnerabilities..."
-                    // Asumsikan 'trivy.exe' ada di PATH Windows Anda.
-                    powershell "trivy image --exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed ${fullImageNameForScan}"
-                    // Jika Trivy via Docker:
-                    // powershell "docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image --exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed ${fullImageNameForScan}"
+                    echo "Scanning image ${fullImageNameForScan} for vulnerabilities using Docker..."
+                    // Menggunakan powershell untuk menjalankan Trivy via Docker
+                    // Mount Docker socket agar Trivy di dalam container bisa mengakses image lokal yang baru di-build
+                    // Perhatikan path Docker socket untuk Docker Desktop di Windows
+                    // Docker Desktop biasanya membuat named pipe yang bisa di-mount
+                    // atau Docker CLI akan menanganinya.
+                    // Umumnya, `-v /var/run/docker.sock:/var/run/docker.sock` bekerja untuk Linux.
+                    // Untuk Windows dengan Docker Desktop, Docker CLI biasanya sudah bisa mengakses daemon.
+                    // Jika ada masalah, path socket di Windows bisa jadi '//./pipe/docker_engine'
+                    // Coba tanpa mount socket dulu jika image sudah di-resolve Docker daemon.
+                    // Jika image ${fullImageNameForScan} ada di daemon lokal, Trivy dalam container mungkin butuh akses ke daemon.
+                    powershell "docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image --exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed ${fullImageNameForScan}"
                     
                     echo "Cleaning up scan image (optional)..."
                     try {
