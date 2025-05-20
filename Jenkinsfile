@@ -44,7 +44,8 @@ pipeline {
                 echo "Installing dependencies and running tests inside Docker..."
                 // Menggunakan Docker untuk menjalankan tes di lingkungan yang bersih dan terisolasi
                 // Pastikan image node:18-alpine bisa di-pull oleh Docker daemon Anda
-                sh 'docker run --rm -v "$(pwd)":/app -w /app node:18-alpine sh -c "npm ci && npm test"'
+                // Gunakan ${PWD} atau (Resolve-Path .).Path untuk path saat ini di PowerShell
+                powershell 'docker run --rm -v "${PWD}:/app" -w /app node:18-alpine sh -c "npm ci && npm test"'
                 echo "Dependencies installed and tests completed."
             }
         }
