@@ -48,6 +48,9 @@
     "express-redis-cache": {
       "redis": "^3.1.2"
     },
+    "execa": {
+      "cross-spawn": "^7.0.6"
+    },
     "cross-spawn": "^7.0.6"
   }
 }
