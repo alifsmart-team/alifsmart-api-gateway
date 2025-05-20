@@ -1,6 +1,6 @@
 // Jenkinsfile
 pipeline {
-    agent any // Pastikan agent ini memiliki Docker & Git
+    agent any // Pastikan agent ini memiliki Docker & Git terinstal dan dikonfigurasi dengan benar
 
     tools {
         git 'Default' // Nama Git tool dari Manage Jenkins > Tools
@@ -38,10 +38,40 @@ pipeline {
             }
         }
 
-        // OPSIONAL: Jika sumber daya memungkinkan, aktifkan kembali tahap Test & Scan
-        /* stage('Install Dependencies & Test') { ... }
-        stage('Security Scan (Trivy)') { ... }
-        */
+        stage('Install Dependencies & Test') { // <--- TAHAP INI DIAKTIFKAN KEMBALI
+            steps {
+                echo "Installing dependencies and running tests..."
+                // 'npm ci' lebih disarankan untuk CI/CD karena install dependencies persis dari package-lock.json
+                // dan biasanya lebih cepat. 'npm ci' juga akan menginstall devDependencies.
+                // Pastikan agent Jenkins (mesin lokal Anda) memiliki Docker terinstal dan bisa menjalankan container.
+                sh 'docker run --rm -v $(pwd):/app -w /app node:18-alpine sh -c "npm ci && npm test"'
+                echo "Dependencies installed and tests completed."
+            }
+        }
+
+        stage('Security Scan (Trivy)') { // <--- TAHAP INI DIAKTIFKAN KEMBALI
+            steps {
+                script {
+                    echo "Starting security scan with Trivy..."
+                    // Pastikan Trivy terinstall di agent atau bisa dijalankan via Docker
+                    // Jika Trivy tidak terinstal di agent, Anda bisa menjalankannya via Docker.
+                    // Contoh di bawah menggunakan Trivy yang ada di PATH. Jika via Docker, sesuaikan perintah sh.
+
+                    def fullImageNameForScan = "${DOCKER_HUB_USERNAME}/${DOCKER_IMAGE_NAME}:scan-${env.BUILD_ID}"
+                    
+                    echo "Building temporary image for scan: ${fullImageNameForScan}"
+                    // Asumsikan Dockerfile ada di root workspace
+                    sh "docker build -f Dockerfile -t ${fullImageNameForScan} ."
+                    
+                    echo "Scanning image ${fullImageNameForScan} for vulnerabilities..."
+                    // Gagal_kan pipeline jika ada vulnerability CRITICAL atau HIGH
+                    // Jika trivy tidak ada di PATH, ganti dengan perintah docker run untuk trivy, contoh:
+                    // sh "docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v \$(pwd)/.trivycache:/root/.cache/ aquasec/trivy:latest image --exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed ${fullImageNameForScan}"
+                    sh "trivy image --exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed ${fullImageNameForScan}"
+                    echo "Security scan completed."
+                }
+            }
+        }
 
         stage('Build & Push Docker Image') {
             steps {
@@ -52,7 +82,6 @@ pipeline {
                     def imageWithLatestTag = "${imageBaseName}:latest"
 
                     echo "Logging in to Docker Hub as ${DOCKER_HUB_USERNAME}..."
-                    // Gunakan docker.withRegistry untuk login yang lebih aman dan terintegrasi
                     docker.withRegistry('https://index.docker.io/v1/', DOCKER_HUB_CREDENTIALS_ID) {
                         echo "Building image ${imageWithBuildTag}..."
                         def customImage = docker.build("${imageWithBuildTag}", "-f Dockerfile .")
@@ -81,16 +110,12 @@ pipeline {
                     script {
                         def remoteLogin = "${env.SSH_USERNAME}@${SWARM_MANAGER_IP}"
                         def remoteStackPath = "/opt/stacks/alifsmart-api-gateway"
-                        def stackFileNameOnRepo = "api-gateway-stack.yml" // File dari repo Anda
-                        def stackNameInSwarm = "alifsmart_stack" // Nama stack di Swarm
+                        def stackFileNameOnRepo = "api-gateway-stack.yml" 
+                        def stackNameInSwarm = "alifsmart_stack" 
 
                         sh "ssh -i ${env.SSH_PRIVATE_KEY_FILE} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${remoteLogin} \"mkdir -p ${remoteStackPath}\""
                         sh "scp -i ${env.SSH_PRIVATE_KEY_FILE} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ./${stackFileNameOnRepo} ${remoteLogin}:${remoteStackPath}/${stackFileNameOnRepo}"
-
-                        // Variabel environment dari Jenkins akan disubstitusi di dalam stack file oleh Docker Swarm
-                        // jika stack file Anda menggunakan format ${VARIABLE} atau $VARIABLE
-                        // Perintah export di bawah adalah untuk memastikan variabel tersebut ada di environment shell remote
-                        // saat docker stack deploy dijalankan.
+                        
                         sh """
                         ssh -i ${env.SSH_PRIVATE_KEY_FILE} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${remoteLogin} \\
                             "export DOCKER_HUB_USERNAME='${DOCKER_HUB_USERNAME}' && \\
@@ -111,18 +136,16 @@ pipeline {
         }
     } // Akhir stages
 
-    post { // Aksi setelah semua stage selesai
+    post { 
         always {
             echo "Pipeline finished."
-            // cleanWs() // Bersihkan workspace jika perlu
+            // cleanWs() 
         }
         success {
             echo "Pipeline sukses!"
-            // Kirim notifikasi sukses
         }
         failure {
             echo "Pipeline gagal!"
-            // Kirim notifikasi gagal
         }
     }
 }
