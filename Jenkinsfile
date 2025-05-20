@@ -42,9 +42,7 @@ pipeline {
         stage('Install Dependencies & Test') {
             steps {
                 echo "Installing dependencies and running tests inside Docker..."
-                // Menggunakan Docker untuk menjalankan tes di lingkungan yang bersih dan terisolasi
-                // Pastikan image node:18-alpine bisa di-pull oleh Docker daemon Anda
-                // Gunakan ${PWD} atau (Resolve-Path .).Path untuk path saat ini di PowerShell
+                // Gunakan ${PWD} untuk path saat ini di PowerShell
                 powershell 'docker run --rm -v "${PWD}:/app" -w /app node:18-alpine sh -c "npm ci && npm run test -- --passWithNoTests"'
                 echo "Dependencies installed and tests completed."
             }
@@ -54,25 +52,22 @@ pipeline {
             steps {
                 script {
                     echo "Starting security scan with Trivy..."
-                    def fullImageNameForScan = "${DOCKER_HUB_USERNAME}/${DOCKER_IMAGE_NAME}:scan-${env.BUILD_NUMBER}" // Menggunakan BUILD_NUMBER untuk tag unik
+                    def fullImageNameForScan = "${DOCKER_HUB_USERNAME}/${DOCKER_IMAGE_NAME}:scan-${env.BUILD_NUMBER}"
 
                     echo "Building temporary image for scan: ${fullImageNameForScan}"
-                    // Menggunakan plugin Docker Pipeline untuk build
-                    docker.withRegistry('https://index.docker.io/v1/', DOCKER_HUB_CREDENTIALS_ID) { // Login mungkin diperlukan jika base image privat
-                        def scanImage = docker.build(fullImageNameForScan, "-f Dockerfile .") // Asumsikan Dockerfile ada di root
-                        // Tidak perlu push image scan ini ke registry
+                    docker.withRegistry('https://index.docker.io/v1/', DOCKER_HUB_CREDENTIALS_ID) {
+                        def scanImage = docker.build(fullImageNameForScan, "-f Dockerfile .")
                     }
                     
                     echo "Scanning image ${fullImageNameForScan} for vulnerabilities..."
-                    // Asumsikan 'trivy' ada di PATH agent Jenkins.
-                    // Jika tidak, jalankan Trivy via Docker:
-                    // sh "docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image --exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed ${fullImageNameForScan}"
-                    sh "trivy image --exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed ${fullImageNameForScan}"
+                    // Asumsikan 'trivy.exe' ada di PATH Windows Anda.
+                    powershell "trivy image --exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed ${fullImageNameForScan}"
+                    // Jika Trivy via Docker:
+                    // powershell "docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image --exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed ${fullImageNameForScan}"
                     
-                    // Bersihkan image scan setelah selesai (opsional, tapi baik untuk menghemat ruang)
-                    // Gunakan try-catch agar tidak menggagalkan pipeline jika rmi gagal (misal, image sedang digunakan)
+                    echo "Cleaning up scan image (optional)..."
                     try {
-                        sh "docker rmi ${fullImageNameForScan}"
+                        powershell "docker rmi ${fullImageNameForScan}"
                     } catch (err) {
                         echo "Warning: Failed to remove scan image ${fullImageNameForScan}. Error: ${err.getMessage()}"
                     }
@@ -86,25 +81,21 @@ pipeline {
                 script {
                     echo "Building and pushing Docker image..."
                     def imageBaseName = "${DOCKER_HUB_USERNAME}/${DOCKER_IMAGE_NAME}"
-                    // Menggunakan env.BUILD_NUMBER untuk tag yang unik per build
                     def imageWithBuildTag = "${imageBaseName}:${env.BUILD_NUMBER}"
                     def imageWithLatestTag = "${imageBaseName}:latest"
 
-                    // Menggunakan docker.withRegistry untuk login, build, tag, dan push yang terintegrasi
                     docker.withRegistry('https://index.docker.io/v1/', DOCKER_HUB_CREDENTIALS_ID) {
                         echo "Building image ${imageWithBuildTag}..."
-                        // Opsi '-f Dockerfile .' menentukan Dockerfile dan konteks build.
-                        // Konteks '.' berarti direktori workspace Jenkins saat ini.
                         def customImage = docker.build(imageWithBuildTag, "-f Dockerfile .")
 
                         echo "Tagging image ${imageWithBuildTag} as ${imageWithLatestTag}..."
-                        customImage.tag(imageWithLatestTag) // Memberi tag 'latest' ke image yang sama
+                        customImage.tag(imageWithLatestTag)
 
                         echo "Pushing image ${imageWithBuildTag} to Docker Hub..."
-                        customImage.push(env.BUILD_NUMBER) // Mendorong tag dengan BUILD_NUMBER
+                        customImage.push(env.BUILD_NUMBER)
                         
                         echo "Pushing image ${imageWithLatestTag} to Docker Hub..."
-                        customImage.push('latest') // Mendorong tag 'latest'
+                        customImage.push('latest')
                     }
                     echo "Docker images pushed successfully."
                 }
@@ -121,20 +112,24 @@ pipeline {
                 )]) {
                     script {
                         def remoteLogin = "${env.SSH_USERNAME}@${SWARM_MANAGER_IP}"
-                        def remoteStackPath = "/opt/stacks/${DOCKER_IMAGE_NAME}" // Path unik per aplikasi
-                        def stackFileNameInRepo = "api-gateway-stack.yml" // Pastikan nama file ini ada di repo Anda
-                        def stackNameInSwarm = "alifsmart_apigw" // Nama stack di Swarm
+                        def remoteStackPath = "/opt/stacks/${DOCKER_IMAGE_NAME}" 
+                        def stackFileNameInRepo = "api-gateway-stack.yml" 
+                        def stackNameInSwarm = "alifsmart_apigw"
 
                         // Membuat direktori di server remote jika belum ada
-                        sh "ssh -i ${env.SSH_PRIVATE_KEY_FILE} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${remoteLogin} \"mkdir -p ${remoteStackPath}\""
+                        // Menggunakan powershell untuk memanggil ssh.exe
+                        // Path ke file kunci privat akan ada di env.SSH_PRIVATE_KEY_FILE
+                        // Untuk UserKnownHostsFile=/dev/null di Windows, alternatifnya adalah menonaktifkannya dengan cara lain
+                        // atau menggunakan $null jika PowerShell menginterpretasikannya. Untuk kesederhanaan,
+                        // kita bisa mencoba tanpa UserKnownHostsFile atau menggunakan nul jika ssh.exe mendukungnya.
+                        // Cara paling aman adalah menambahkan host key ke known_hosts Windows atau Jenkins.
+                        powershell "ssh -i \"${env.SSH_PRIVATE_KEY_FILE}\" -o StrictHostKeyChecking=no -o UserKnownHostsFile=nul ${remoteLogin} \"mkdir -p ${remoteStackPath}\""
                         
                         // Menyalin file stack dari workspace Jenkins ke server remote
-                        sh "scp -i ${env.SSH_PRIVATE_KEY_FILE} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ./${stackFileNameInRepo} ${remoteLogin}:${remoteStackPath}/${stackFileNameInRepo}"
+                        powershell "scp -i \"${env.SSH_PRIVATE_KEY_FILE}\" -o StrictHostKeyChecking=no -o UserKnownHostsFile=nul .\\${stackFileNameInRepo} ${remoteLogin}:${remoteStackPath}/${stackFileNameInRepo}"
                         
                         echo "Deploying stack ${stackNameInSwarm} on Swarm Manager ${remoteLogin}..."
-                        // Variabel environment untuk substitusi di dalam stack file di sisi Swarm manager
-                        // Docker stack deploy akan membaca variabel environment ini saat memproses compose file.
-                        // Pastikan stack file Anda menggunakan format ${VARIABLE} atau $VARIABLE untuk substitusi.
+                        // Perintah deployCommand akan dieksekusi di shell Linux remote server, jadi sintaks export dll. tetap
                         def deployCommand = """
                         export DOCKER_HUB_USERNAME='${DOCKER_HUB_USERNAME}' && \\
                         export DOCKER_IMAGE_NAME='${DOCKER_IMAGE_NAME}' && \\
@@ -148,7 +143,10 @@ pipeline {
                             ${stackNameInSwarm} \\
                             --with-registry-auth
                         """
-                        sh "ssh -i ${env.SSH_PRIVATE_KEY_FILE} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${remoteLogin} \"${deployCommand}\""
+                        // Menggunakan powershell untuk memanggil ssh.exe dengan perintah multi-baris
+                        // Perlu escape karakter khusus PowerShell jika ada di dalam deployCommand,
+                        // tapi karena deployCommand adalah string Groovy yang akan dieksekusi di remote, ini seharusnya aman.
+                        powershell "ssh -i \"${env.SSH_PRIVATE_KEY_FILE}\" -o StrictHostKeyChecking=no -o UserKnownHostsFile=nul ${remoteLogin} \"${deployCommand}\""
                         echo "Deployment to Docker Swarm initiated."
                     }
                 }
@@ -156,18 +154,15 @@ pipeline {
         }
     } // Akhir stages
 
-    post { // Aksi setelah semua stage selesai
+    post { 
         always {
             echo "Pipeline finished."
-            // cleanWs() // Opsional: Bersihkan workspace Jenkins setelah build selesai
         }
         success {
             echo "Pipeline sukses! Aplikasi telah di-build, di-push, dan (semoga) terdeploy dengan baik."
-            // Tambahkan notifikasi sukses (misalnya ke Slack, Email)
         }
         failure {
             echo "Pipeline gagal! Silakan periksa log untuk detailnya."
-            // Tambahkan notifikasi kegagalan
         }
     }
 }
