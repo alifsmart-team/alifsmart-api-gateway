@@ -89,7 +89,6 @@ pipeline {
                                 -v "${env.WORKSPACE}:/scan_ws" \\
                                 -w /scan_ws \\
                                 aquasec/trivy:${env.TRIVY_VERSION} image \\
-                                --ignore-ids CVE-2024-21538 \\
                                 --exit-code 1 \\
                                 --severity CRITICAL,HIGH \\
                                 --ignore-unfixed \\
