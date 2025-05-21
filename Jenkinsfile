@@ -119,115 +119,57 @@ pipeline {
             }
         }
 
-        // stage('Deploy via Docker SSH') {
-        //     steps {
-        //         script {
-        //             // Menggunakan withCredentials dengan sshUserPrivateKey
-        //             withCredentials([sshUserPrivateKey(
-        //                 credentialsId: env.SWARM_MANAGER_SSH_CREDENTIALS_ID, // ID kredensial SSH Anda
-        //                 keyFileVariable: 'SSH_PRIVATE_KEY_FILE_PATH',     // Variabel untuk path file kunci
-        //                 usernameVariable: 'SSH_USER_FROM_CRED'          // Variabel untuk username dari kredensial
-        //             )]) {
-        //                 // Pastikan env.SWARM_MANAGER_USER diisi dari SSH_USER_FROM_CRED atau diset manual jika perlu
-        //                 def sshUser = env.SSH_USER_FROM_CRED
-        //                 if (sshUser == null || sshUser.trim().isEmpty()) {
-        //                     // Jika username tidak diset di kredensial, gunakan dari environment atau set default
-        //                     sshUser = env.SWARM_MANAGER_USER 
-        //                     if (sshUser == null || sshUser.trim().isEmpty()){
-        //                         sshUser = 'root' // Fallback terakhir jika tidak ada sama sekali
-        //                         echo "Warning: SSH Username not found in credentials or environment, defaulting to '${sshUser}'"
-        //                     }
-        //                 }
-        //                 def sshTarget = "${sshUser}@${env.SWARM_MANAGER_IP}"
-        //                 def stackPath = "/opt/stacks/${env.DOCKER_IMAGE_NAME}" // Path di server remote
-        //                 def stackFileNameOnRepo = "api-gateway-stack.yml"    // Nama file di workspace Jenkins
-        //                 def remoteStackFile = "${stackPath}/${stackFileNameOnRepo}"
-        //                 def stackNameInSwarm = "alifsmart_apigw"
-
-        //                 // Opsi SSH, sekarang menggunakan path file kunci dari variabel
-        //                 def sshOpts = "-i \"${env.SSH_PRIVATE_KEY_FILE_PATH}\" -o StrictHostKeyChecking=no -o UserKnownHostsFile=nul -o LogLevel=ERROR"
-        //                 // Catatan: Anda mungkin perlu menangani izin file %SSH_PRIVATE_KEY_FILE_PATH% di Windows.
-        //                 // Ini sering menyebabkan error "bad permissions".
-
-        //                 echo "Target remote login: ${sshTarget}"
-        //                 echo "Creating remote directory: ${stackPath}"
-        //                 powershell "ssh ${sshOpts} ${sshTarget} 'mkdir -p ${stackPath}'"
-                        
-        //                 echo "Copying local .\\${stackFileNameOnRepo} to ${sshTarget}:${remoteStackFile}"
-        //                 powershell "scp ${sshOpts} .\\${stackFileNameOnRepo} ${sshTarget}:${remoteStackFile}"
-
-        //                 echo "Deploying stack ${stackNameInSwarm} on Swarm Manager..."
-        //                 def deployCommandOnRemote = """
-        //                 export DOCKER_HUB_USERNAME='${env.DOCKER_HUB_USERNAME}'; \\
-        //                 export DOCKER_IMAGE_NAME='${env.DOCKER_IMAGE_NAME}'; \\
-        //                 export IMAGE_TAG='latest'; \\
-        //                 export ENV_REDIS_HOST='${env.ENV_REDIS_HOST}'; \\
-        //                 export ENV_REDIS_PORT='${env.ENV_REDIS_PORT}'; \\
-        //                 export ENV_REDIS_TLS_ENABLED='${env.ENV_REDIS_TLS_ENABLED}'; \\
-        //                 echo 'Deploying stack ${stackNameInSwarm} with image ${env.DOCKER_HUB_USERNAME}/${env.DOCKER_IMAGE_NAME}:latest...'; \\
-        //                 docker stack deploy -c '${remoteStackFile}' '${stackNameInSwarm}' --with-registry-auth --prune
-        //                 """.trim().replaceAll("\\n", " ")
-
-        //                 powershell "ssh ${sshOpts} ${sshTarget} \"${deployCommandOnRemote}\""
-        //                 echo "Deployment to Docker Swarm initiated."
-        //             }
-        //         }
-        //     }
-        // }
-        stage('Deploy to Docker Swarm') {
+        stage('Deploy via Docker SSH') {
             steps {
                 script {
-                    echo "🚀 Starting Docker Swarm deployment..."
-
-                    try {
-                        sshagent(credentials: [env.SWARM_MANAGER_SSH_CREDENTIALS_ID]) {
-                            echo "[INFO] SSH Agent started."
-
-                            def sshUser = env.SWARM_MANAGER_USER
-                            def sshTarget = "${sshUser}@${env.SWARM_MANAGER_IP}"
-                            def sshOpts = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=nul -o LogLevel=VERBOSE"
-                            def stackPath = "/opt/stacks/${env.DOCKER_IMAGE_NAME}"
-                            def stackFileNameInRepo = "api-gateway-stack.yml"
-                            def remoteStackFile = "${stackPath}/${stackFileNameInRepo}"
-                            def stackNameInSwarm = "alifsmart_apigw"
-
-                            echo "🔍 Verifying SSH connection..."
-                            powershell """
-                                ssh ${sshOpts} ${sshTarget} 'pwd'
-                            """
-
-                            echo "📂 Creating remote directory: ${stackPath}"
-                            powershell """
-                                ssh ${sshOpts} ${sshTarget} 'mkdir -p ${stackPath}'
-                            """
-
-                            echo "📤 Copying stack file to remote..."
-                            powershell """
-                                scp ${sshOpts} .\\${stackFileNameInRepo} ${sshTarget}:${remoteStackFile}
-                            """
-
-                            echo "🐳 Deploying Docker stack '${stackNameInSwarm}'..."
-                            def deployCommandOnRemote = """
-                                export DOCKER_HUB_USERNAME='${env.DOCKER_HUB_USERNAME}'; \\
-                                export DOCKER_IMAGE_NAME='${env.DOCKER_IMAGE_NAME}'; \\
-                                export IMAGE_TAG='latest'; \\
-                                export ENV_REDIS_HOST='${env.ENV_REDIS_HOST}'; \\
-                                export ENV_REDIS_PORT='${env.ENV_REDIS_PORT}'; \\
-                                export ENV_REDIS_TLS_ENABLED='${env.ENV_REDIS_TLS_ENABLED}'; \\
-                                docker stack deploy -c '${remoteStackFile}' '${stackNameInSwarm}' --with-registry-auth --prune
-                            """.trim().replaceAll("\\n", " ")
-
-                            powershell """
-                                ssh ${sshOpts} ${sshTarget} "${deployCommandOnRemote}"
-                            """
-
-                            echo "✅ Deployment finished successfully."
+                    // Menggunakan withCredentials dengan sshUserPrivateKey
+                    withCredentials([sshUserPrivateKey(
+                        credentialsId: env.SWARM_MANAGER_SSH_CREDENTIALS_ID, // ID kredensial SSH Anda
+                        keyFileVariable: 'SSH_PRIVATE_KEY_FILE_PATH',     // Variabel untuk path file kunci
+                        usernameVariable: 'SSH_USER_FROM_CRED'          // Variabel untuk username dari kredensial
+                    )]) {
+                        // Pastikan env.SWARM_MANAGER_USER diisi dari SSH_USER_FROM_CRED atau diset manual jika perlu
+                        def sshUser = env.SSH_USER_FROM_CRED
+                        if (sshUser == null || sshUser.trim().isEmpty()) {
+                            // Jika username tidak diset di kredensial, gunakan dari environment atau set default
+                            sshUser = env.SWARM_MANAGER_USER 
+                            if (sshUser == null || sshUser.trim().isEmpty()){
+                                sshUser = 'root' // Fallback terakhir jika tidak ada sama sekali
+                                echo "Warning: SSH Username not found in credentials or environment, defaulting to '${sshUser}'"
+                            }
                         }
-                    } catch (Exception e) {
-                        echo "[❌ ERROR] Deployment failed: ${e.getMessage()}"
-                        e.getStackTrace().take(10).each { line -> echo "    at ${line}" }
-                        currentBuild.result = 'FAILURE'
-                        error("Stopping pipeline due to deployment failure.")
+                        def sshTarget = "${sshUser}@${env.SWARM_MANAGER_IP}"
+                        def stackPath = "/opt/stacks/${env.DOCKER_IMAGE_NAME}" // Path di server remote
+                        def stackFileNameOnRepo = "api-gateway-stack.yml"    // Nama file di workspace Jenkins
+                        def remoteStackFile = "${stackPath}/${stackFileNameOnRepo}"
+                        def stackNameInSwarm = "alifsmart_apigw"
+
+                        // Opsi SSH, sekarang menggunakan path file kunci dari variabel
+                        def sshOpts = "-i \"${env.SSH_PRIVATE_KEY_FILE_PATH}\" -o StrictHostKeyChecking=no -o UserKnownHostsFile=nul -o LogLevel=ERROR"
+                        // Catatan: Anda mungkin perlu menangani izin file %SSH_PRIVATE_KEY_FILE_PATH% di Windows.
+                        // Ini sering menyebabkan error "bad permissions".
+
+                        echo "Target remote login: ${sshTarget}"
+                        echo "Creating remote directory: ${stackPath}"
+                        powershell "ssh ${sshOpts} ${sshTarget} 'mkdir -p ${stackPath}'"
+                        
+                        echo "Copying local .\\${stackFileNameOnRepo} to ${sshTarget}:${remoteStackFile}"
+                        powershell "scp ${sshOpts} .\\${stackFileNameOnRepo} ${sshTarget}:${remoteStackFile}"
+
+                        echo "Deploying stack ${stackNameInSwarm} on Swarm Manager..."
+                        def deployCommandOnRemote = """
+                        export DOCKER_HUB_USERNAME='${env.DOCKER_HUB_USERNAME}'; \\
+                        export DOCKER_IMAGE_NAME='${env.DOCKER_IMAGE_NAME}'; \\
+                        export IMAGE_TAG='latest'; \\
+                        export ENV_REDIS_HOST='${env.ENV_REDIS_HOST}'; \\
+                        export ENV_REDIS_PORT='${env.ENV_REDIS_PORT}'; \\
+                        export ENV_REDIS_TLS_ENABLED='${env.ENV_REDIS_TLS_ENABLED}'; \\
+                        echo 'Deploying stack ${stackNameInSwarm} with image ${env.DOCKER_HUB_USERNAME}/${env.DOCKER_IMAGE_NAME}:latest...'; \\
+                        docker stack deploy -c '${remoteStackFile}' '${stackNameInSwarm}' --with-registry-auth --prune
+                        """.trim().replaceAll("\\n", " ")
+
+                        powershell "ssh ${sshOpts} ${sshTarget} \"${deployCommandOnRemote}\""
+                        echo "Deployment to Docker Swarm initiated."
                     }
                 }
             }
