@@ -28,6 +28,7 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
+                cleanWs()
                 echo "Checking out from GitHub repository..."
                 git branch: 'main',
                     credentialsId: env.GITHUB_CREDENTIALS_ID,
@@ -55,6 +56,13 @@ pipeline {
         stage('Security Scan (Trivy)') {
             steps {
                 script {
+                    echo "Verifying production dependencies for cross-spawn in workspace..."
+                    sh """
+                        docker run --rm \\
+                            -v "${env.WORKSPACE}:/app" \\
+                            -w /app \\
+                            node:18-alpine sh -c "echo '--- Running npm ls cross-spawn --omit=dev ---' && (npm ls cross-spawn --omit=dev --long || echo 'cross-spawn not found by ls or ls failed to find it as a prod dep')"
+                    """
                     echo "Starting security scan with Trivy version ${env.TRIVY_VERSION}..."
                     def fullImageNameForScan = "${env.FULL_APP_IMAGE_NAME}:scan-${env.BUILD_NUMBER}"
 
