@@ -14,15 +14,15 @@ pipeline {
         ENV_REDIS_PORT            = credentials('redis_port')
         ENV_REDIS_TLS_ENABLED   = credentials('redis_tls_is_enabled')
         SWARM_MANAGER_SSH_CREDENTIALS_ID = 'ssh_credential_id'
-        SWARM_MANAGER_IP                 = '47.84.46.116'
-        SWARM_MANAGER_USER               = 'root'
-        REMOTE_APP_DIR                   = '/opt/stacks/alifsmart-api-gateway'
+        SWARM_MANAGER_IP               = '47.84.46.116'
+        SWARM_MANAGER_USER             = 'root'
+        REMOTE_APP_DIR                 = '/opt/stacks/alifsmart-api-gateway'
         DOCKER_HUB_CREDENTIALS_ID = 'docker_credential_id'
         GITHUB_CREDENTIALS_ID = 'github_pat'
-        TRIVY_VERSION = '0.55.0'
+        TRIVY_VERSION = '0.55.0' // Pastikan versi Trivy ini sesuai dengan kebutuhan Anda
         
         // Menentukan versi Node.js yang akan digunakan
-        NODE_VERSION_ALPINE = 'node:20-alpine' // <--- TAMBAHKAN ATAU GUNAKAN VARIABEL INI
+        NODE_VERSION_ALPINE = 'node:20-alpine'
     }
 
     stages {
@@ -48,68 +48,10 @@ pipeline {
                         -e ENV_REDIS_PORT=${env.ENV_REDIS_PORT} \\
                         -e ENV_REDIS_TLS_ENABLED=${env.ENV_REDIS_TLS_ENABLED} \\
                         ${env.NODE_VERSION_ALPINE} sh -c 'echo "Cleaning npm cache..." && npm cache clean --force && echo "Running npm ci and tests..." && npm ci && npm run test -- --passWithNoTests'
-                """ // <--- UBAH DI SINI
+                """
                 echo "Dependencies installed and tests completed."
             }
         }
-
-        // stage('Security Scan (Trivy)') {
-        //     steps {
-        //         script {
-        //             echo "Verifying production dependencies for cross-spawn in workspace using ${env.NODE_VERSION_ALPINE}..."
-        //             sh """
-        //                 docker run --rm \\
-        //                     -v "${env.WORKSPACE}:/app" \\
-        //                     -w /app \\
-        //                     ${env.NODE_VERSION_ALPINE} sh -c "echo '--- Running npm ls cross-spawn --omit=dev ---' && (npm ls cross-spawn --omit=dev --long || echo 'cross-spawn not found by ls or ls failed to find it as a prod dep')"
-        //             """ // <--- UBAH DI SINI
-        //             echo "Starting security scan with Trivy version ${env.TRIVY_VERSION}..."
-        //             def fullImageNameForScan = "${env.FULL_APP_IMAGE_NAME}:scan-${env.BUILD_NUMBER}"
-
-        //             echo "Building temporary image for scan (with --no-cache, using Node 20 from Dockerfile): ${fullImageNameForScan}"
-        //             // Dockerfile sekarang akan menggunakan FROM node:20-alpine
-        //             docker.build(fullImageNameForScan, "--no-cache -f Dockerfile .")
-                    
-        //             echo "Ensuring Trivy image ${env.TRIVY_VERSION} is available..."
-        //             // sh "docker pull aquasec/trivy:${env.TRIVY_VERSION}" 
-
-        //             echo "Cleaning persistent Trivy cache volume using Trivy ${env.TRIVY_VERSION}..."
-        //             sh """
-        //                 docker run --rm \\
-        //                     -v trivycache:/root/.cache/ \\
-        //                     aquasec/trivy:${env.TRIVY_VERSION} clean --all
-        //             """
-        //             echo "Persistent Trivy cache volume 'trivycache' cleaned."
-
-        //             echo "Scanning image ${fullImageNameForScan} for vulnerabilities with Trivy ${env.TRIVY_VERSION}..."
-        //             try {
-        //                 sh """
-        //                     docker run --rm \\
-        //                         -v /var/run/docker.sock:/var/run/docker.sock \\
-        //                         -v "${env.WORKSPACE}:/scan_ws" \\
-        //                         -w /scan_ws \\
-        //                         aquasec/trivy:${env.TRIVY_VERSION} image \\
-        //                         --exit-code 1 \\
-        //                         --severity CRITICAL,HIGH \\
-        //                         --ignore-unfixed \\
-        //                         ${fullImageNameForScan} 
-        //                 """
-        //                 echo "Trivy scan passed or specified vulnerabilities were ignored."
-        //             } catch (err) {
-        //                 echo "Trivy scan failed or found unignored CRITICAL/HIGH vulnerabilities. Error: ${err.getMessage()}"
-        //                 error("Trivy scan found unignored CRITICAL/HIGH vulnerabilities or an error occurred.")
-        //             } finally {
-        //                 echo "Cleaning up scan image (optional)..."
-        //                 try {
-        //                     sh "docker rmi ${fullImageNameForScan} || true"
-        //                 } catch (cleanupErr) {
-        //                     echo "Warning: Failed to remove scan image ${fullImageNameForScan}. Error: ${cleanupErr.getMessage()}"
-        //                 }
-        //             }
-        //             echo "Security scan completed."
-        //         }
-        //     }
-        // }
 
         stage('Build & Push Docker Image') {
             steps {
@@ -137,7 +79,62 @@ pipeline {
             }
         }
 
+        // --- TAHAP BARU UNTUK SCAN TRIVY ---
+        stage('Scan with Trivy') {
+            steps {
+                script {
+                    echo "Scanning Docker image ${env.FULL_APP_IMAGE_NAME}:${env.BUILD_NUMBER} with Trivy..."
+                    // Tarik image yang baru saja di-push untuk memastikan kita memindai versi yang benar
+                    // Jika agent Jenkins dan Docker daemon berada di host yang sama,
+                    // image mungkin sudah tersedia secara lokal setelah build.
+                    // Namun, pull eksplisit memastikan image terbaru dari registry yang digunakan.
+                    docker.withRegistry("https://index.docker.io/v1/", env.DOCKER_HUB_CREDENTIALS_ID) {
+                        sh "docker pull ${env.FULL_APP_IMAGE_NAME}:${env.BUILD_NUMBER}"
+                    }
+
+                    // Jalankan Trivy menggunakan image Docker resmi Trivy
+                    // --rm akan menghapus kontainer setelah selesai
+                    // -v /var/run/docker.sock:/var/run/docker.sock memungkinkan Trivy mengakses Docker daemon
+                    // -v $HOME/trivy-cache:/root/.cache/trivy cache direktori untuk mempercepat scan berikutnya
+                    // --exit-code 1 akan membuat build gagal jika ada kerentanan HIGH atau CRITICAL
+                    // --severity HIGH,CRITICAL hanya melaporkan kerentanan dengan tingkat keparahan tersebut
+                    // --format table untuk output yang mudah dibaca di log Jenkins
+                    // Ganti ${env.FULL_APP_IMAGE_NAME}:${env.BUILD_NUMBER} dengan image yang ingin Anda pindai
+                    try {
+                        sh """
+                            docker run --rm \\
+                                -v /var/run/docker.sock:/var/run/docker.sock \\
+                                -v \$HOME/.trivycache:/root/.cache/trivy \\
+                                aquasec/trivy:${env.TRIVY_VERSION} image \\
+                                --exit-code 1 \\
+                                --severity HIGH,CRITICAL \\
+                                --ignore-unfixed \\
+                                --format table \\
+                                ${env.FULL_APP_IMAGE_NAME}:${env.BUILD_NUMBER}
+                        """
+                        // Anda bisa menambahkan opsi --output trivy-report.json untuk menyimpan hasil scan
+                        // dan kemudian mengarsipkannya menggunakan archiveArtifacts
+                        // contoh: aquasec/trivy:${env.TRIVY_VERSION} image --format json --output trivy-results.json ${env.FULL_APP_IMAGE_NAME}:${env.BUILD_NUMBER}
+                        // archiveArtifacts artifacts: 'trivy-results.json', fingerprint: true
+                    } catch (e) {
+                        // Tangani error jika Trivy menemukan kerentanan (karena --exit-code 1)
+                        echo "Trivy scan found vulnerabilities or an error occurred."
+                        // currentBuild.result = 'FAILURE' // Sudah diatur oleh exit code 1
+                        throw e // Lempar kembali error untuk menghentikan pipeline
+                    }
+                    echo "Trivy scan completed."
+                }
+            }
+        }
+        // --- AKHIR TAHAP SCAN TRIVY ---
+
         stage('Deploy via Docker SSH') {
+            when {
+                // Hanya deploy jika branch adalah main dan build sebelumnya (termasuk scan) sukses
+                branch 'main' 
+                // Anda bisa juga menambahkan pengecekan status build sebelumnya jika perlu
+                // expression { currentBuild.result == null || currentBuild.result == 'SUCCESS' }
+            }
             steps {
                 script {
                     withCredentials([sshUserPrivateKey(credentialsId: env.SWARM_MANAGER_SSH_CREDENTIALS_ID, keyFileVariable: 'SSH_PRIVATE_KEY_FILE')]) {
@@ -182,9 +179,11 @@ pipeline {
     post { 
         always {
             echo "Pipeline finished."
+            // Bersihkan workspace
+            cleanWs()
         }
         success {
-            echo "Pipeline sukses! Aplikasi telah di-build, di-push, dan (semoga) terdeploy dengan baik."
+            echo "Pipeline sukses! Aplikasi telah di-build, di-scan, di-push, dan (semoga) terdeploy dengan baik."
         }
         failure {
             echo "Pipeline gagal! Silakan periksa log untuk detailnya."

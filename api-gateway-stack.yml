@@ -8,9 +8,9 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3000
-      REDIS_HOST: ${REDIS_HOST} # Di-inject pas 'docker stack deploy' atau dari CI/CD
-      REDIS_PORT: ${REDIS_PORT}
-      REDIS_TLS_ENABLED: ${REDIS_TLS_ENABLED}
+      ENV_REDIS_HOST: ${REDIS_HOST} # Di-inject pas 'docker stack deploy' atau dari CI/CD
+      ENV_REDIS_PORT: ${REDIS_PORT}
+      REDIS_TLS_ENABLED: ${ENV_REDIS_TLS_ENABLED}
       # Path ke file secret di dalam container
       REDIS_PASSWORD_FILE: /run/secrets/redis_password_value 
       JWT_SECRET_FILE: /run/secrets/jwt_secret_value
@@ -32,7 +32,7 @@ services:
     networks:
       - alifsmart_net
     deploy: # ... (blok deploy lo udah oke) ...
-      replicas: 2
+      replicas: 1
       update_config:
         parallelism: 1
         delay: 10s
