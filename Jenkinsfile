@@ -67,55 +67,56 @@ pipeline {
         }
 
         stage('Security Scan (Trivy)') {
-            steps {
-                script {
-                    echo "Starting security scan with Trivy..."
-                    // Nama image untuk scan dibuat unik dengan BUILD_NUMBER
-                    def fullImageNameForScan = "${env.FULL_APP_IMAGE_NAME}:scan-${env.BUILD_NUMBER}"
+    steps {
+        script {
+            echo "Starting security scan with Trivy..."
+            def fullImageNameForScan = "${env.FULL_APP_IMAGE_NAME}:scan-${env.BUILD_NUMBER}"
 
-                    echo "Building temporary image for scan: ${fullImageNameForScan}"
-                    docker.build(fullImageNameForScan, "-f Dockerfile .")
-                    
-                    echo "Cleaning Trivy cache before scanning..."
-                    // Menjalankan trivy clean untuk mereset cache
-                    // Pastikan volume 'trivycache' sama dengan yang digunakan untuk scan
-                    sh """
-                        docker run --rm \\
-                            -v trivycache:/root/.cache/ \\
-                            aquasec/trivy:latest clean --all
-                    """
-                    echo "Trivy cache cleaned."
+            echo "Building temporary image for scan: ${fullImageNameForScan}"
+            docker.build(fullImageNameForScan, "-f Dockerfile .")
+            
+            echo "Cleaning persistent Trivy cache volume (if used elsewhere or for general hygiene)..."
+            // Langkah ini membersihkan named volume 'trivycache'.
+            // Ini mungkin tidak berdampak langsung ke scan di bawah jika scan tidak me-mount volume ini,
+            // tapi baik untuk menjaga kebersihan volume 'trivycache' jika ada.
+            sh """
+                docker run --rm \\
+                    -v trivycache:/root/.cache/ \\
+                    aquasec/trivy:latest clean --all
+            """
+            echo "Persistent Trivy cache volume 'trivycache' cleaned."
 
-                    echo "Scanning image ${fullImageNameForScan} for vulnerabilities..."
-                    try {
-                        sh """
-                            docker run --rm \\
-                                -v /var/run/docker.sock:/var/run/docker.sock \\
-                                -v trivycache:/root/.cache/ \\
-                                -v "${env.WORKSPACE}:/scan_ws" \\
-                                -w /scan_ws \\
-                                aquasec/trivy:latest image \\
-                                --exit-code 1 \\
-                                --severity CRITICAL,HIGH \\
-                                --ignore-unfixed \\
-                                ${fullImageNameForScan}
-                        """
-                        echo "Trivy scan passed or ignored vulnerabilities did not cause failure."
-                    } catch (err) {
-                        echo "Trivy scan failed or found unignored CRITICAL/HIGH vulnerabilities. Error: ${err.getMessage()}"
-                        error("Trivy scan found unignored CRITICAL/HIGH vulnerabilities or an error occurred.")
-                    } finally { // Blok finally untuk memastikan cleanup image scan selalu dicoba
-                        echo "Cleaning up scan image (optional)..."
-                        try {
-                            sh "docker rmi ${fullImageNameForScan} || true" // '|| true' agar tidak error jika image tidak ada
-                        } catch (cleanupErr) {
-                            echo "Warning: Failed to remove scan image ${fullImageNameForScan}. Error: ${cleanupErr.getMessage()}"
-                        }
-                    }
-                    echo "Security scan completed."
+            echo "Scanning image ${fullImageNameForScan} for vulnerabilities (without using persistent cache for the scan itself)..."
+            try {
+                // Perintah scan sekarang TIDAK me-mount volume 'trivycache'.
+                // Trivy akan mengunduh DB ke cache internal kontainer yang bersifat sementara.
+                sh """
+                    docker run --rm \\
+                        -v /var/run/docker.sock:/var/run/docker.sock \\
+                        -v "${env.WORKSPACE}:/scan_ws" \\
+                        -w /scan_ws \\
+                        aquasec/trivy:latest image \\
+                        --exit-code 1 \\
+                        --severity CRITICAL,HIGH \\
+                        --ignore-unfixed \\
+                        ${fullImageNameForScan}
+                """
+                echo "Trivy scan passed or ignored vulnerabilities did not cause failure."
+            } catch (err) {
+                echo "Trivy scan failed or found unignored CRITICAL/HIGH vulnerabilities. Error: ${err.getMessage()}"
+                error("Trivy scan found unignored CRITICAL/HIGH vulnerabilities or an error occurred.")
+            } finally {
+                echo "Cleaning up scan image (optional)..."
+                try {
+                    sh "docker rmi ${fullImageNameForScan} || true"
+                } catch (cleanupErr) {
+                    echo "Warning: Failed to remove scan image ${fullImageNameForScan}. Error: ${cleanupErr.getMessage()}"
                 }
             }
+            echo "Security scan completed."
         }
+    }
+}
 
         stage('Build & Push Docker Image') {
             steps {
