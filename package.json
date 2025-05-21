@@ -22,7 +22,7 @@
   "homepage": "https://github.com/alifsmart-team/alifsmart-api-gateway#readme",
   "dependencies": {
     "cors": "^2.8.5",
-    "cross-spawn": "^7.0.6",
+    "cross-spawn": "7.0.6",
     "dotenv": "^16.5.0",
     "execa": "^9.5.3",
     "express": "^5.1.0",
@@ -45,12 +45,8 @@
     "supertest": "^7.1.0"
   },
   "overrides": {
-    "cross-spawn": "^7.0.6",
     "express-redis-cache": {
       "redis": "^3.1.2"
-    },
-    "execa": {
-      "cross-spawn": "^7.0.6"
     }
   }
 }
