@@ -119,61 +119,170 @@ pipeline {
             }
         }
 
-        stage('Deploy via Docker SSH') {
-            steps {
-                script {
-                    // Menggunakan withCredentials dengan sshUserPrivateKey
-                    withCredentials([sshUserPrivateKey(
-                        credentialsId: env.SWARM_MANAGER_SSH_CREDENTIALS_ID, // ID kredensial SSH Anda
-                        keyFileVariable: 'SSH_PRIVATE_KEY_FILE_PATH',     // Variabel untuk path file kunci
-                        usernameVariable: 'SSH_USER_FROM_CRED'          // Variabel untuk username dari kredensial
-                    )]) {
-                        // Pastikan env.SWARM_MANAGER_USER diisi dari SSH_USER_FROM_CRED atau diset manual jika perlu
-                        def sshUser = env.SSH_USER_FROM_CRED
-                        if (sshUser == null || sshUser.trim().isEmpty()) {
-                            // Jika username tidak diset di kredensial, gunakan dari environment atau set default
-                            sshUser = env.SWARM_MANAGER_USER 
-                            if (sshUser == null || sshUser.trim().isEmpty()){
-                                sshUser = 'root' // Fallback terakhir jika tidak ada sama sekali
-                                echo "Warning: SSH Username not found in credentials or environment, defaulting to '${sshUser}'"
-                            }
-                        }
-                        def sshTarget = "${sshUser}@${env.SWARM_MANAGER_IP}"
-                        def stackPath = "/opt/stacks/${env.DOCKER_IMAGE_NAME}" // Path di server remote
-                        def stackFileNameOnRepo = "api-gateway-stack.yml"    // Nama file di workspace Jenkins
-                        def remoteStackFile = "${stackPath}/${stackFileNameOnRepo}"
-                        def stackNameInSwarm = "alifsmart_apigw"
+        // stage('Deploy via Docker SSH') {
+        //     steps {
+        //         script {
+        //             // Menggunakan withCredentials dengan sshUserPrivateKey
+        //             withCredentials([sshUserPrivateKey(
+        //                 credentialsId: env.SWARM_MANAGER_SSH_CREDENTIALS_ID, // ID kredensial SSH Anda
+        //                 keyFileVariable: 'SSH_PRIVATE_KEY_FILE_PATH',     // Variabel untuk path file kunci
+        //                 usernameVariable: 'SSH_USER_FROM_CRED'          // Variabel untuk username dari kredensial
+        //             )]) {
+        //                 // Pastikan env.SWARM_MANAGER_USER diisi dari SSH_USER_FROM_CRED atau diset manual jika perlu
+        //                 def sshUser = env.SSH_USER_FROM_CRED
+        //                 if (sshUser == null || sshUser.trim().isEmpty()) {
+        //                     // Jika username tidak diset di kredensial, gunakan dari environment atau set default
+        //                     sshUser = env.SWARM_MANAGER_USER 
+        //                     if (sshUser == null || sshUser.trim().isEmpty()){
+        //                         sshUser = 'root' // Fallback terakhir jika tidak ada sama sekali
+        //                         echo "Warning: SSH Username not found in credentials or environment, defaulting to '${sshUser}'"
+        //                     }
+        //                 }
+        //                 def sshTarget = "${sshUser}@${env.SWARM_MANAGER_IP}"
+        //                 def stackPath = "/opt/stacks/${env.DOCKER_IMAGE_NAME}" // Path di server remote
+        //                 def stackFileNameOnRepo = "api-gateway-stack.yml"    // Nama file di workspace Jenkins
+        //                 def remoteStackFile = "${stackPath}/${stackFileNameOnRepo}"
+        //                 def stackNameInSwarm = "alifsmart_apigw"
 
-                        // Opsi SSH, sekarang menggunakan path file kunci dari variabel
-                        def sshOpts = "-i \"${env.SSH_PRIVATE_KEY_FILE_PATH}\" -o StrictHostKeyChecking=no -o UserKnownHostsFile=nul -o LogLevel=ERROR"
-                        // Catatan: Anda mungkin perlu menangani izin file %SSH_PRIVATE_KEY_FILE_PATH% di Windows.
-                        // Ini sering menyebabkan error "bad permissions".
+        //                 // Opsi SSH, sekarang menggunakan path file kunci dari variabel
+        //                 def sshOpts = "-i \"${env.SSH_PRIVATE_KEY_FILE_PATH}\" -o StrictHostKeyChecking=no -o UserKnownHostsFile=nul -o LogLevel=ERROR"
+        //                 // Catatan: Anda mungkin perlu menangani izin file %SSH_PRIVATE_KEY_FILE_PATH% di Windows.
+        //                 // Ini sering menyebabkan error "bad permissions".
 
-                        echo "Target remote login: ${sshTarget}"
-                        echo "Creating remote directory: ${stackPath}"
-                        powershell "ssh ${sshOpts} ${sshTarget} 'mkdir -p ${stackPath}'"
+        //                 echo "Target remote login: ${sshTarget}"
+        //                 echo "Creating remote directory: ${stackPath}"
+        //                 powershell "ssh ${sshOpts} ${sshTarget} 'mkdir -p ${stackPath}'"
                         
-                        echo "Copying local .\\${stackFileNameOnRepo} to ${sshTarget}:${remoteStackFile}"
-                        powershell "scp ${sshOpts} .\\${stackFileNameOnRepo} ${sshTarget}:${remoteStackFile}"
+        //                 echo "Copying local .\\${stackFileNameOnRepo} to ${sshTarget}:${remoteStackFile}"
+        //                 powershell "scp ${sshOpts} .\\${stackFileNameOnRepo} ${sshTarget}:${remoteStackFile}"
 
-                        echo "Deploying stack ${stackNameInSwarm} on Swarm Manager..."
-                        def deployCommandOnRemote = """
-                        export DOCKER_HUB_USERNAME='${env.DOCKER_HUB_USERNAME}'; \\
-                        export DOCKER_IMAGE_NAME='${env.DOCKER_IMAGE_NAME}'; \\
-                        export IMAGE_TAG='latest'; \\
-                        export ENV_REDIS_HOST='${env.ENV_REDIS_HOST}'; \\
-                        export ENV_REDIS_PORT='${env.ENV_REDIS_PORT}'; \\
-                        export ENV_REDIS_TLS_ENABLED='${env.ENV_REDIS_TLS_ENABLED}'; \\
-                        echo 'Deploying stack ${stackNameInSwarm} with image ${env.DOCKER_HUB_USERNAME}/${env.DOCKER_IMAGE_NAME}:latest...'; \\
-                        docker stack deploy -c '${remoteStackFile}' '${stackNameInSwarm}' --with-registry-auth --prune
-                        """.trim().replaceAll("\\n", " ")
+        //                 echo "Deploying stack ${stackNameInSwarm} on Swarm Manager..."
+        //                 def deployCommandOnRemote = """
+        //                 export DOCKER_HUB_USERNAME='${env.DOCKER_HUB_USERNAME}'; \\
+        //                 export DOCKER_IMAGE_NAME='${env.DOCKER_IMAGE_NAME}'; \\
+        //                 export IMAGE_TAG='latest'; \\
+        //                 export ENV_REDIS_HOST='${env.ENV_REDIS_HOST}'; \\
+        //                 export ENV_REDIS_PORT='${env.ENV_REDIS_PORT}'; \\
+        //                 export ENV_REDIS_TLS_ENABLED='${env.ENV_REDIS_TLS_ENABLED}'; \\
+        //                 echo 'Deploying stack ${stackNameInSwarm} with image ${env.DOCKER_HUB_USERNAME}/${env.DOCKER_IMAGE_NAME}:latest...'; \\
+        //                 docker stack deploy -c '${remoteStackFile}' '${stackNameInSwarm}' --with-registry-auth --prune
+        //                 """.trim().replaceAll("\\n", " ")
 
-                        powershell "ssh ${sshOpts} ${sshTarget} \"${deployCommandOnRemote}\""
-                        echo "Deployment to Docker Swarm initiated."
+        //                 powershell "ssh ${sshOpts} ${sshTarget} \"${deployCommandOnRemote}\""
+        //                 echo "Deployment to Docker Swarm initiated."
+        //             }
+        //         }
+        //     }
+        // }
+        stage('Deploy via Docker SSH') {
+    steps {
+        script {
+            withCredentials([sshUserPrivateKey(
+                credentialsId: env.SWARM_MANAGER_SSH_CREDENTIALS_ID,
+                keyFileVariable: 'SSH_PRIVATE_KEY_FILE_PATH',
+                usernameVariable: 'SSH_USER_FROM_CRED'
+            )]) {
+                def sshUser = env.SSH_USER_FROM_CRED
+                if (sshUser == null || sshUser.trim().isEmpty()) {
+                    sshUser = env.SWARM_MANAGER_USER
+                    if (sshUser == null || sshUser.trim().isEmpty()){
+                        sshUser = 'root'
+                        echo "Warning: SSH Username not found in credentials or environment, defaulting to '${sshUser}'"
                     }
                 }
+                def sshTarget = "${sshUser}@${env.SWARM_MANAGER_IP}"
+                def stackPath = "/opt/stacks/${env.DOCKER_IMAGE_NAME}"
+                def stackFileNameOnRepo = "api-gateway-stack.yml"
+                def remoteStackFile = "${stackPath}/${stackFileNameOnRepo}"
+                def stackNameInSwarm = "alifsmart_apigw"
+
+                // PowerShell script to set restrictive permissions on the SSH private key
+                def setPermissionsScript = """
+                \$ErrorActionPreference = 'Stop'
+                \$keyPath = \$env:SSH_PRIVATE_KEY_FILE_PATH # Use environment variable directly in PowerShell
+
+                Write-Host "Attempting to set permissions for private key: \$keyPath"
+
+                if (-not (Test-Path \$keyPath -PathType Leaf)) {
+                    Write-Error "Private key file not found at: \$keyPath. This path comes from env.SSH_PRIVATE_KEY_FILE_PATH."
+                    exit 1
+                }
+
+                # Determine the user context the script is running under (e.g., NT AUTHORITY\\SYSTEM, or a specific service account)
+                \$currentUser = (whoami).Trim()
+                Write-Host "Script is running as user: '\$currentUser'. This user will be granted ownership and/or full control."
+
+                try {
+                    Write-Host "Resetting ACLs for \$keyPath..."
+                    icacls.exe \$keyPath /reset
+                    Write-Host "Successfully reset ACLs."
+
+                    Write-Host "Removing inherited permissions for \$keyPath..."
+                    icacls.exe \$keyPath /inheritance:r # Remove inherited Access Control Entries (ACEs)
+                    Write-Host "Successfully removed inherited permissions."
+
+                    Write-Host "Granting FullControl to '\$currentUser' for \$keyPath..."
+                    # Grant Full Control to the user running the script.
+                    # This user (Jenkins agent user) needs to be the effective owner or have rights to modify permissions.
+                    icacls.exe \$keyPath /grant "\$currentUser:(F)"
+                    Write-Host "Successfully granted FullControl to '\$currentUser'."
+
+                    # Attempt to remove permissions for common groups to ensure the key is protected.
+                    # Use /c to continue if a group is not found or an error occurs on removal.
+                    Write-Host "Attempting to remove 'Everyone' group permissions..."
+                    icacls.exe \$keyPath /remove:g "Everyone" /c
+                    Write-Host "Attempting to remove 'Users' group permissions..."
+                    icacls.exe \$keyPath /remove:g "Users" /c
+                    Write-Host "Attempting to remove 'Authenticated Users' group permissions..."
+                    icacls.exe \$keyPath /remove:g "Authenticated Users" /c
+                    
+                    Write-Host "Permissions successfully set for \$keyPath."
+                    Write-Host "Final ACLs for verification:"
+                    icacls.exe \$keyPath # Display final permissions
+                } catch {
+                    Write-Error "Error during permission setting for \$keyPath: \$(\$_.Exception.Message)"
+                    Write-Host "Current ACLs on failure:"
+                    icacls.exe \$keyPath # Display current permissions on failure
+                    exit 1
+                }
+                """
+                echo "Setting permissions for SSH private key file: ${env.SSH_PRIVATE_KEY_FILE_PATH}"
+                powershell setPermissionsScript
+
+                // SSH options. Using $env:SSH_PRIVATE_KEY_FILE_PATH directly in PowerShell commands.
+                // Using NUL (all caps) for UserKnownHostsFile is more conventional for Windows null device.
+                def sshBaseOpts = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL -o LogLevel=ERROR"
+
+                echo "Target remote login: ${sshTarget}"
+                echo "Creating remote directory: ${stackPath}"
+                powershell "ssh -i \`"\$env:SSH_PRIVATE_KEY_FILE_PATH\`" ${sshBaseOpts} '${sshTarget}' 'mkdir -p ${stackPath}'"
+                
+                echo "Copying local .\\${stackFileNameOnRepo} to ${sshTarget}:${remoteStackFile}"
+                // Ensure stackFileNameOnRepo doesn't have spaces or special characters or quote it appropriately: ".\\${stackFileNameOnRepo}"
+                powershell "scp -i \`"\$env:SSH_PRIVATE_KEY_FILE_PATH\`" ${sshBaseOpts} .\\${stackFileNameOnRepo} '${sshTarget}:${remoteStackFile}'"
+
+                echo "Deploying stack ${stackNameInSwarm} on Swarm Manager..."
+                def deployCommandOnRemote = """
+                export DOCKER_HUB_USERNAME='${env.DOCKER_HUB_USERNAME}'; \\
+                export DOCKER_IMAGE_NAME='${env.DOCKER_IMAGE_NAME}'; \\
+                export IMAGE_TAG='latest'; \\
+                export ENV_REDIS_HOST='${env.ENV_REDIS_HOST}'; \\
+                export ENV_REDIS_PORT='${env.ENV_REDIS_PORT}'; \\
+                export ENV_REDIS_TLS_ENABLED='${env.ENV_REDIS_TLS_ENABLED}'; \\
+                echo 'Deploying stack ${stackNameInSwarm} with image ${env.DOCKER_HUB_USERNAME}/${env.DOCKER_IMAGE_NAME}:latest...'; \\
+                docker stack deploy -c '${remoteStackFile}' '${stackNameInSwarm}' --with-registry-auth --prune
+                """.trim().replaceAll("\\n", " ")
+
+                // Pass the remote command string in double quotes to ssh
+                powershell "ssh -i \`"\$env:SSH_PRIVATE_KEY_FILE_PATH\`" ${sshBaseOpts} '${sshTarget}' \`"${deployCommandOnRemote.replace('"', '`"')}\`""
+                // Note: .replace('"', '`"') in deployCommandOnRemote escapes double quotes for PowerShell, if any are present and needed literally by the remote shell.
+                // If deployCommandOnRemote only uses single quotes internally, this might not be strictly necessary.
+
+                echo "Deployment to Docker Swarm initiated."
             }
         }
+    }
+}
     } // Akhir stages
 
     post { 
