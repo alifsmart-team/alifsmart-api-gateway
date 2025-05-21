@@ -4,25 +4,32 @@ pipeline {
 
     tools {
         // Nama instalasi Git dari Manage Jenkins > Tools
+        // Jika Git sudah ada di PATH agent, ini mungkin tidak selalu diperlukan.
         git 'Default'
     }
 
     environment {
         // Konfigurasi Docker Image
-        DOCKER_HUB_USERNAME = 'vitoackerman'
-        DOCKER_IMAGE_NAME = 'alifsmart-api-gateway'
+        DOCKER_HUB_USERNAME = 'vitoackerman' // Username Docker Hub Anda
+        DOCKER_IMAGE_NAME   = 'alifsmart-api-gateway' // Nama image aplikasi Anda
+        // Nama image lengkap untuk aplikasi (digunakan saat push dan deploy)
+        FULL_APP_IMAGE_NAME = "${DOCKER_HUB_USERNAME}/${DOCKER_IMAGE_NAME}" // Dihasilkan dari variabel di atas
 
         // ID Kredensial Redis dari Jenkins (GANTI DENGAN ID YANG BENAR DARI JENKINS ANDA)
-        ENV_REDIS_HOST = credentials('redis_host')
-        ENV_REDIS_PORT = credentials('redis_port')
-        ENV_REDIS_TLS_ENABLED = credentials('redis_tls_is_enabled')
+        // Ini akan memuat konten kredensial ke dalam variabel lingkungan.
+        ENV_REDIS_HOST          = credentials('redis_host')
+        ENV_REDIS_PORT          = credentials('redis_port')
+        ENV_REDIS_TLS_ENABLED   = credentials('redis_tls_is_enabled') // Pastikan nilai kredensial ini adalah string 'true' atau 'false'
 
-        // Detail Swarm Manager & ID Kredensial SSH (GANTI DENGAN ID YANG BENAR DARI JENKINS ANDA)
-        SWARM_MANAGER_SSH_CREDENTIALS_ID = 'ssh_credential_id'
-        SWARM_MANAGER_IP = '47.84.46.116' // IP Server 1 Swarm Manager Anda
-        SWARM_MANAGER_USER = 'root'
+        // Detail Swarm Manager & ID Kredensial SSH
+        // SWARM_MANAGER_SSH_CREDENTIALS_ID menyimpan ID dari Jenkins Credential yang akan digunakan.
+        SWARM_MANAGER_SSH_CREDENTIALS_ID = 'ssh_credential_id' // ID Jenkins Credential Anda yang berisi private key
+        SWARM_MANAGER_IP                 = '47.84.46.116'
+        SWARM_MANAGER_USER               = 'root' // Hati-hati menggunakan user root
+        REMOTE_APP_DIR                   = '/opt/stacks/alifsmart-api-gateway' // Direktori aplikasi di server remote
         
         // ID Kredensial Docker Hub (GANTI DENGAN ID YANG BENAR DARI JENKINS ANDA)
+        // Digunakan oleh docker.withRegistry() dan docker.build().push()
         DOCKER_HUB_CREDENTIALS_ID = 'docker_credential_id'
 
         // ID Kredensial GitHub PAT (GANTI DENGAN ID YANG BENAR DARI JENKINS ANDA)
@@ -33,9 +40,9 @@ pipeline {
         stage('Checkout') {
             steps {
                 echo "Checking out from GitHub repository..."
-                git branch: 'main',
-                    credentialsId: env.GITHUB_CREDENTIALS_ID,
-                    url: 'https://github.com/alifsmart-team/alifsmart-api-gateway.git' // URL Repo Anda
+                git branch: 'main', // Ganti dengan branch yang Anda inginkan
+                    credentialsId: env.GITHUB_CREDENTIALS_ID, // Menggunakan variabel environment
+                    url: 'https://github.com/alifsmart-team/alifsmart-api-gateway.git'
                 echo "Checkout complete."
             }
         }
@@ -43,10 +50,18 @@ pipeline {
         stage('Install Dependencies & Test') {
             steps {
                 echo "Installing dependencies and running tests inside Docker..."
-                // Menggunakan sh (shell) untuk menjalankan perintah docker run di Linux/Unix
-                // Bagian sh -c "..." di dalam container tetap karena container adalah Linux (node:18-alpine)
-                // Menggunakan ${env.WORKSPACE} untuk mereferensikan direktori kerja Jenkins yang utama
-                sh "docker run --rm -v '${env.WORKSPACE}:/app' -w /app node:18-alpine sh -c 'npm ci && npm run test -- --passWithNoTests'"
+                // Menggunakan sh untuk menjalankan di agent Linux
+                // Variabel Redis dari environment Jenkins akan otomatis tersedia di dalam sh block ini.
+                // Kita perlu meneruskannya secara eksplisit ke dalam container Docker.
+                sh """
+                    docker run --rm \\
+                        -v "${env.WORKSPACE}:/app" \\
+                        -w /app \\
+                        -e ENV_REDIS_HOST=${env.ENV_REDIS_HOST} \\
+                        -e ENV_REDIS_PORT=${env.ENV_REDIS_PORT} \\
+                        -e ENV_REDIS_TLS_ENABLED=${env.ENV_REDIS_TLS_ENABLED} \\
+                        node:18-alpine sh -c 'npm ci && npm run test -- --passWithNoTests'
+                """
                 echo "Dependencies installed and tests completed."
             }
         }
@@ -55,36 +70,45 @@ pipeline {
             steps {
                 script {
                     echo "Starting security scan with Trivy..."
-                    def fullImageNameForScan = "${env.DOCKER_HUB_USERNAME}/${env.DOCKER_IMAGE_NAME}:scan-${env.BUILD_NUMBER}"
+                    // Nama image untuk scan dibuat unik dengan BUILD_NUMBER
+                    def fullImageNameForScan = "${env.FULL_APP_IMAGE_NAME}:scan-${env.BUILD_NUMBER}"
 
                     echo "Building temporary image for scan: ${fullImageNameForScan}"
-                    // docker.build() sudah lintas platform, tidak perlu diubah dari sh/powershell di sini
-                    docker.withRegistry('https://index.docker.io/v1/', env.DOCKER_HUB_CREDENTIALS_ID) {
-                        def scanImage = docker.build(fullImageNameForScan, "-f Dockerfile .")
-                        // Tidak perlu push image scan ini ke registry
-                    }
+                    // Login ke Docker Hub tidak diperlukan jika image scan hanya untuk penggunaan lokal
+                    // dan base image (node:18-alpine) bersifat publik.
+                    // Jika Dockerfile Anda merujuk image private, maka withRegistry diperlukan di sini.
+                    docker.build(fullImageNameForScan, "-f Dockerfile .")
                     
                     echo "Scanning image ${fullImageNameForScan} for vulnerabilities..."
-                    // Menggunakan powershell untuk menjalankan Trivy.
-                    // Asumsikan 'trivy.exe' ada di PATH Windows Anda.
-                    def trivyScanCommand = "trivy image --exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed --ignore-ids CVE-2024-21538 ${fullImageNameForScan}"
-                    // Jika Anda menjalankan Trivy via Docker (direkomendasikan jika trivy.exe tidak di PATH):
-                    // trivyScanCommand = "docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image --exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed --ignore-ids CVE-2024-21538 ${fullImageNameForScan}"
-                    
+                    // Menggunakan Trivy via Docker untuk portabilitas di agent Linux
+                    // Pastikan Docker socket di-mount jika Trivy perlu mengakses Docker daemon.
+                    // Variabel trivyScanCommand dipindahkan ke dalam try-catch untuk kejelasan.
                     try {
-                        powershell "${trivyScanCommand}"
+                        // Menggunakan sh untuk menjalankan perintah Docker Trivy
+                        sh """
+                            docker run --rm \\
+                                -v /var/run/docker.sock:/var/run/docker.sock \\
+                                -v trivycache:/root/.cache/ \\
+                                aquasec/trivy:0.51.1 image \\
+                                --exit-code 1 \\
+                                --severity CRITICAL,HIGH \\
+                                --ignore-unfixed \\
+                                ${fullImageNameForScan}
+                        """
+                        // --ignore-ids CVE-2024-21538 (Jika masih relevan, tambahkan kembali di atas)
                         echo "Trivy scan passed or ignored vulnerabilities did not cause failure."
                     } catch (err) {
                         echo "Trivy scan failed or found unignored CRITICAL/HIGH vulnerabilities. Error: ${err.getMessage()}"
-                        // Jika Anda ingin pipeline GAGAL jika ada temuan serius yang tidak diabaikan:
-                        // error("Trivy scan found unignored CRITICAL/HIGH vulnerabilities or an error occurred.")
-                    }
-                    
-                    echo "Cleaning up scan image (optional)..."
-                    try {
-                        powershell "docker rmi ${fullImageNameForScan}"
-                    } catch (cleanupErr) {
-                        echo "Warning: Failed to remove scan image ${fullImageNameForScan}. Error: ${cleanupErr.getMessage()}"
+                        // Gagal-kan pipeline jika ada temuan serius
+                        error("Trivy scan found unignored CRITICAL/HIGH vulnerabilities or an error occurred.")
+                    } finally { // Blok finally untuk memastikan cleanup image scan selalu dicoba
+                        echo "Cleaning up scan image (optional)..."
+                        try {
+                            // Menggunakan sh untuk menghapus image
+                            sh "docker rmi ${fullImageNameForScan} || true" // '|| true' agar tidak error jika image tidak ada
+                        } catch (cleanupErr) {
+                            echo "Warning: Failed to remove scan image ${fullImageNameForScan}. Error: ${cleanupErr.getMessage()}"
+                        }
                     }
                     echo "Security scan completed."
                 }
@@ -95,24 +119,22 @@ pipeline {
             steps {
                 script {
                     echo "Building and pushing Docker image..."
-                    def imageName = "${env.DOCKER_HUB_USERNAME}/${env.DOCKER_IMAGE_NAME}"
                     def buildTag = env.BUILD_NUMBER 
                     def latestTag = "latest"
 
-                    // Menggunakan docker.withRegistry untuk login, build, tag, dan push yang terintegrasi
                     docker.withRegistry("https://index.docker.io/v1/", env.DOCKER_HUB_CREDENTIALS_ID) {
                         
-                        echo "Building image ${imageName}:${buildTag}..."
-                        def customImage = docker.build("${imageName}:${buildTag}", "-f Dockerfile .")
+                        echo "Building image ${env.FULL_APP_IMAGE_NAME}:${buildTag}..."
+                        def customImage = docker.build("${env.FULL_APP_IMAGE_NAME}:${buildTag}", "-f Dockerfile .")
 
-                        echo "Tagging image ${imageName}:${buildTag} as ${imageName}:${latestTag}..."
-                        customImage.tag(latestTag)
+                        echo "Tagging image ${env.FULL_APP_IMAGE_NAME}:${buildTag} as ${env.FULL_APP_IMAGE_NAME}:${latestTag}..."
+                        customImage.tag(latestTag) // Menambahkan tag 'latest' ke image yang sama
 
-                        echo "Pushing image ${imageName}:${buildTag} to Docker Hub..."
+                        echo "Pushing image ${env.FULL_APP_IMAGE_NAME}:${buildTag} to Docker Hub..."
                         customImage.push(buildTag)
                         
-                        echo "Pushing image ${imageName}:${latestTag} to Docker Hub..."
-                        customImage.push(latestTag)
+                        echo "Pushing image ${env.FULL_APP_IMAGE_NAME}:${latestTag} to Docker Hub..."
+                        customImage.push(latestTag) // Push tag 'latest'
                     }
                     echo "Docker images pushed successfully."
                 }
@@ -122,44 +144,44 @@ pipeline {
         stage('Deploy via Docker SSH') {
             steps {
                 script {
-                    // Ganti dengan ID kredensial SSH private key Anda
-                    withCredentials([sshUserPrivateKey(credentialsId: 'SWARM_MANAGER_SSH_CREDENTIALS_ID', keyFileVariable: 'SSH_PRIVATE_KEY_FILE')]) {
-                        echo "Target remote login: ${REMOTE_USER_HOST}"
-                        echo "Creating remote directory (if not exists): ${REMOTE_APP_DIR}"
-                        // Menggunakan sh bukan powershell
+                    // Menggunakan nilai dari env.SWARM_MANAGER_SSH_CREDENTIALS_ID
+                    withCredentials([sshUserPrivateKey(credentialsId: env.SWARM_MANAGER_SSH_CREDENTIALS_ID, keyFileVariable: 'SSH_PRIVATE_KEY_FILE')]) {
+                        def remoteHost = "${env.SWARM_MANAGER_USER}@${env.SWARM_MANAGER_IP}"
+                        
+                        echo "Target remote login: ${remoteHost}"
+                        echo "Creating remote directory (if not exists): ${env.REMOTE_APP_DIR}"
+                        // Menggunakan sh untuk perintah SSH
                         sh """
-                            ssh -i ${SSH_PRIVATE_KEY_FILE} \\
+                            ssh -i \${SSH_PRIVATE_KEY_FILE} \\
                                 -o StrictHostKeyChecking=no \\
                                 -o UserKnownHostsFile=/dev/null \\
-                                ${REMOTE_USER_HOST} 'mkdir -p ${REMOTE_APP_DIR}'
+                                ${remoteHost} 'mkdir -p ${env.REMOTE_APP_DIR}'
                         """
 
-                        echo "Deploying application on remote server..."
-                        // Contoh perintah deployment. Sesuaikan dengan kebutuhan Anda.
-                        // Misalnya, jika Anda menggunakan docker-compose:
-                        // 1. Pastikan docker-compose.yml ada di server atau di-copy.
-                        // 2. Tarik image terbaru dan jalankan.
+                        echo "Deploying application on remote server: ${env.FULL_APP_IMAGE_NAME}:latest"
+                        // Sesuaikan perintah deployment berikut ini dengan kebutuhan Anda (misalnya, docker stack deploy untuk Swarm)
                         sh """
-                            ssh -i ${SSH_PRIVATE_KEY_FILE} \\
+                            ssh -i \${SSH_PRIVATE_KEY_FILE} \\
                                 -o StrictHostKeyChecking=no \\
                                 -o UserKnownHostsFile=/dev/null \\
-                                ${REMOTE_USER_HOST} "cd ${REMOTE_APP_DIR} && \\
+                                ${remoteHost} "cd ${env.REMOTE_APP_DIR} && \\
                                     echo 'Pulling latest image...' && \\
-                                    docker pull ${APP_IMAGE_NAME}:latest && \\
+                                    docker pull ${env.FULL_APP_IMAGE_NAME}:latest && \\
                                     echo 'Stopping and removing old container (if any)...' && \\
                                     docker stop alifsmart-api-gateway-container || true && \\
                                     docker rm alifsmart-api-gateway-container || true && \\
                                     echo 'Starting new container...' && \\
                                     docker run -d --name alifsmart-api-gateway-container \\
                                         -p 8080:3000 \\
-                                        -e ENV_REDIS_HOST=${ENV_REDIS_HOST} \\
-                                        -e ENV_REDIS_PORT=${ENV_REDIS_PORT} \\
-                                        -e ENV_REDIS_TLS_ENABLED=${ENV_REDIS_TLS_ENABLED} \\
+                                        -e ENV_REDIS_HOST=${env.ENV_REDIS_HOST} \\
+                                        -e ENV_REDIS_PORT=${env.ENV_REDIS_PORT} \\
+                                        -e ENV_REDIS_TLS_ENABLED=${env.ENV_REDIS_TLS_ENABLED} \\
                                         --restart unless-stopped \\
-                                        ${APP_IMAGE_NAME}:latest"
+                                        ${env.FULL_APP_IMAGE_NAME}:latest"
                         """
-                        // Jika menggunakan docker-compose, perintahnya bisa seperti:
-                        // sh "ssh -i ... ${REMOTE_USER_HOST} 'cd ${REMOTE_APP_DIR} && docker-compose pull && docker-compose up -d --remove-orphans'"
+                        // Jika Anda menggunakan Docker Swarm, perintahnya mungkin lebih seperti:
+                        // sh "ssh -i \${SSH_PRIVATE_KEY_FILE} ... ${remoteHost} 'docker stack deploy --compose-file docker-compose.yml --with-registry-auth alifsmart_stack'"
+                        // Pastikan docker-compose.yml Anda sudah ada di server dan dikonfigurasi dengan benar.
                         echo "Deployment commands executed."
                     }
                 }
