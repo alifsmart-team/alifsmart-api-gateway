@@ -236,7 +236,6 @@ pipeline {
         //         } // Akhir dari script block luar
         //     }
         // }
-        stages {
         stage('Test SSH Agent Deploy') {
             steps {
                 script {
