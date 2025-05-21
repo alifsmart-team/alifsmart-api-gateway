@@ -145,7 +145,7 @@ pipeline {
                 def stackNameInSwarm = "alifsmart_apigw"
 
                 // Opsi SSH, sekarang menggunakan path file kunci dari variabel
-                def sshOpts = "-i \`"${env.SSH_PRIVATE_KEY_FILE_PATH}\`" -o StrictHostKeyChecking=no -o UserKnownHostsFile=nul -o LogLevel=ERROR"
+                def sshOpts = "-i \"${env.SSH_PRIVATE_KEY_FILE_PATH}\" -o StrictHostKeyChecking=no -o UserKnownHostsFile=nul -o LogLevel=ERROR"
                 // Catatan: Anda mungkin perlu menangani izin file %SSH_PRIVATE_KEY_FILE_PATH% di Windows.
                 // Ini sering menyebabkan error "bad permissions".
 
