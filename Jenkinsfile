@@ -3,45 +3,34 @@ pipeline {
     agent any // Pastikan agent ini memiliki Docker & Git terinstal dan dikonfigurasi dengan benar
 
     tools {
-        // Nama instalasi Git dari Manage Jenkins > Tools
-        // Jika Git sudah ada di PATH agent, ini mungkin tidak selalu diperlukan.
         git 'Default'
     }
 
     environment {
-        // Konfigurasi Docker Image
-        DOCKER_HUB_USERNAME = 'vitoackerman' // Username Docker Hub Anda
-        DOCKER_IMAGE_NAME   = 'alifsmart-api-gateway' // Nama image aplikasi Anda
-        // Nama image lengkap untuk aplikasi (digunakan saat push dan deploy)
-        FULL_APP_IMAGE_NAME = "${DOCKER_HUB_USERNAME}/${DOCKER_IMAGE_NAME}" // Dihasilkan dari variabel di atas
-
-        // ID Kredensial Redis dari Jenkins (GANTI DENGAN ID YANG BENAR DARI JENKINS ANDA)
-        // Ini akan memuat konten kredensial ke dalam variabel lingkungan.
+        // ... (environment variables lainnya tetap sama) ...
+        DOCKER_HUB_USERNAME = 'vitoackerman'
+        DOCKER_IMAGE_NAME   = 'alifsmart-api-gateway'
+        FULL_APP_IMAGE_NAME = "${DOCKER_HUB_USERNAME}/${DOCKER_IMAGE_NAME}"
         ENV_REDIS_HOST            = credentials('redis_host')
         ENV_REDIS_PORT            = credentials('redis_port')
-        ENV_REDIS_TLS_ENABLED   = credentials('redis_tls_is_enabled') // Pastikan nilai kredensial ini adalah string 'true' atau 'false'
-
-        // Detail Swarm Manager & ID Kredensial SSH
-        // SWARM_MANAGER_SSH_CREDENTIALS_ID menyimpan ID dari Jenkins Credential yang akan digunakan.
-        SWARM_MANAGER_SSH_CREDENTIALS_ID = 'ssh_credential_id' // ID Jenkins Credential Anda yang berisi private key
+        ENV_REDIS_TLS_ENABLED   = credentials('redis_tls_is_enabled')
+        SWARM_MANAGER_SSH_CREDENTIALS_ID = 'ssh_credential_id'
         SWARM_MANAGER_IP                 = '47.84.46.116'
-        SWARM_MANAGER_USER               = 'root' // Hati-hati menggunakan user root
-        REMOTE_APP_DIR                   = '/opt/stacks/alifsmart-api-gateway' // Direktori aplikasi di server remote
-        
-        // ID Kredensial Docker Hub (GANTI DENGAN ID YANG BENAR DARI JENKINS ANDA)
-        // Digunakan oleh docker.withRegistry() dan docker.build().push()
+        SWARM_MANAGER_USER               = 'root'
+        REMOTE_APP_DIR                   = '/opt/stacks/alifsmart-api-gateway'
         DOCKER_HUB_CREDENTIALS_ID = 'docker_credential_id'
-
-        // ID Kredensial GitHub PAT (GANTI DENGAN ID YANG BENAR DARI JENKINS ANDA)
         GITHUB_CREDENTIALS_ID = 'github_pat'
+        
+        // Menentukan versi Trivy yang akan digunakan
+        TRIVY_VERSION = '0.55.0' // Ganti dengan versi spesifik yang Anda inginkan
     }
 
     stages {
         stage('Checkout') {
             steps {
                 echo "Checking out from GitHub repository..."
-                git branch: 'main', // Ganti dengan branch yang Anda inginkan
-                    credentialsId: env.GITHUB_CREDENTIALS_ID, // Menggunakan variabel environment
+                git branch: 'main',
+                    credentialsId: env.GITHUB_CREDENTIALS_ID,
                     url: 'https://github.com/alifsmart-team/alifsmart-api-gateway.git'
                 echo "Checkout complete."
             }
@@ -50,7 +39,6 @@ pipeline {
         stage('Install Dependencies & Test') {
             steps {
                 echo "Installing dependencies and running tests inside Docker..."
-                // Menambahkan npm cache clean --force sebelum npm ci
                 sh """
                     docker run --rm \\
                         -v "${env.WORKSPACE}:/app" \\
@@ -67,38 +55,42 @@ pipeline {
         stage('Security Scan (Trivy)') {
             steps {
                 script {
-                    echo "Starting security scan with Trivy..."
+                    echo "Starting security scan with Trivy version ${env.TRIVY_VERSION}..."
                     def fullImageNameForScan = "${env.FULL_APP_IMAGE_NAME}:scan-${env.BUILD_NUMBER}"
 
                     echo "Building temporary image for scan (with --no-cache): ${fullImageNameForScan}"
-                    // Menambahkan --no-cache untuk memastikan build image bersih dari cache layer Docker
-                    // Ini membantu mengatasi masalah dependensi lama (seperti cross-spawn) yang mungkin masih ada di cache layer
                     docker.build(fullImageNameForScan, "--no-cache -f Dockerfile .")
                     
-                    echo "Cleaning persistent Trivy cache volume (if used elsewhere or for general hygiene)..."
+                    echo "Ensuring Trivy image ${env.TRIVY_VERSION} is available..."
+                    // Opsional: Tarik image Trivy versi spesifik jika belum ada atau untuk memastikan
+                    // sh "docker pull aquasec/trivy:${env.TRIVY_VERSION}" 
+                    // Biasanya, Docker akan menariknya secara otomatis jika belum ada saat 'docker run'.
+
+                    echo "Cleaning persistent Trivy cache volume using Trivy ${env.TRIVY_VERSION}..."
                     sh """
                         docker run --rm \\
                             -v trivycache:/root/.cache/ \\
-                            aquasec/trivy:latest clean --all
+                            aquasec/trivy:${env.TRIVY_VERSION} clean --all
                     """
                     echo "Persistent Trivy cache volume 'trivycache' cleaned."
 
-                    echo "Scanning image ${fullImageNameForScan} for vulnerabilities (without using persistent cache for the scan itself)..."
+                    echo "Scanning image ${fullImageNameForScan} for vulnerabilities with Trivy ${env.TRIVY_VERSION} (without using persistent cache for the scan itself)..."
                     try {
-                        // Perintah scan TIDAK me-mount volume 'trivycache' agar selalu fresh.
                         sh """
                             docker run --rm \\
                                 -v /var/run/docker.sock:/var/run/docker.sock \\
                                 -v "${env.WORKSPACE}:/scan_ws" \\
                                 -w /scan_ws \\
-                                aquasec/trivy:latest image \\
+                                aquasec/trivy:${env.TRIVY_VERSION} image \\
                                 --exit-code 1 \\
                                 --severity CRITICAL,HIGH \\
                                 --ignore-unfixed \\
                                 --ignore-ids CVE-2024-21538 \\
                                 ${fullImageNameForScan}
                         """
-                        echo "Trivy scan passed or ignored vulnerabilities did not cause failure."
+                        // Jika Anda memutuskan untuk menggunakan .trivyignore secara eksklusif,
+                        // hapus baris --ignore-ids CVE-2024-21538 di atas.
+                        echo "Trivy scan passed or specified vulnerabilities were ignored."
                     } catch (err) {
                         echo "Trivy scan failed or found unignored CRITICAL/HIGH vulnerabilities. Error: ${err.getMessage()}"
                         error("Trivy scan found unignored CRITICAL/HIGH vulnerabilities or an error occurred.")
@@ -115,6 +107,9 @@ pipeline {
             }
         }
 
+        // ... (stage 'Build & Push Docker Image' dan 'Deploy via Docker SSH' tetap sama) ...
+        // Pastikan untuk memperbarui panggilan ke Trivy di tempat lain jika ada.
+
         stage('Build & Push Docker Image') {
             steps {
                 script {
@@ -125,14 +120,10 @@ pipeline {
                     docker.withRegistry("https://index.docker.io/v1/", env.DOCKER_HUB_CREDENTIALS_ID) {
                         
                         echo "Building image ${env.FULL_APP_IMAGE_NAME}:${buildTag}..."
-                        // Pertimbangkan untuk menambahkan --no-cache di sini juga jika masalah persistensi dependensi
-                        // masih ada di image final, meskipun build untuk scan sudah --no-cache.
-                        // def customImage = docker.build("${env.FULL_APP_IMAGE_NAME}:${buildTag}", "--no-cache -f Dockerfile .")
                         def customImage = docker.build("${env.FULL_APP_IMAGE_NAME}:${buildTag}", "-f Dockerfile .")
 
-
                         echo "Tagging image ${env.FULL_APP_IMAGE_NAME}:${buildTag} as ${env.FULL_APP_IMAGE_NAME}:${latestTag}..."
-                        customImage.tag(latestTag)
+                        customImage.tag(latestTag) 
 
                         echo "Pushing image ${env.FULL_APP_IMAGE_NAME}:${buildTag} to Docker Hub..."
                         customImage.push(buildTag)
