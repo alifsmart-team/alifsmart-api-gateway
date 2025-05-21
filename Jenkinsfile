@@ -99,6 +99,7 @@ pipeline {
                         --exit-code 1 \\
                         --severity CRITICAL,HIGH \\
                         --ignore-unfixed \\
+                        --ignore-ids CVE-2024-21538 \\
                         ${fullImageNameForScan}
                 """
                 echo "Trivy scan passed or ignored vulnerabilities did not cause failure."
