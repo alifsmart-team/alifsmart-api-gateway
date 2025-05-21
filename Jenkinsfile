@@ -174,22 +174,22 @@ pipeline {
         //         }
         //     }
         // }
-        stage('Deploy to Docker Swarm') { // Anda bisa mengganti nama stage jika mau
+        stage('Deploy to Docker Swarm') {
             steps {
                 script {
                     echo "Preparing to deploy to Docker Swarm..."
                     withCredentials([sshUserPrivateKey(
-                        credentialsId: env.SWARM_MANAGER_SSH_CREDENTIALS_ID, // ID kredensial SSH Anda
-                        keyFileVariable: 'SSH_KEY_FILE_PATH_FROM_JENKINS',   // Variabel untuk path file kunci
-                        // passphraseVariable: 'SSH_KEY_PASSPHRASE',       // Uncomment jika kunci Anda ada passphrase
-                        usernameVariable: 'SSH_USER_FROM_CRED'             // Jika username ada di kredensial
+                        credentialsId: env.SWARM_MANAGER_SSH_CREDENTIALS_ID,
+                        keyFileVariable: 'SSH_KEY_FILE_PATH_FROM_JENKINS',
+                        // passphraseVariable: 'SSH_KEY_PASSPHRASE', // Uncomment jika kunci Anda ada passphrase
+                        usernameVariable: 'SSH_USER_FROM_CRED'
                     )]) {
                         
                         def sshUser = env.SSH_USER_FROM_CRED
                         if (sshUser == null || sshUser.trim().isEmpty()) {
-                            sshUser = env.SWARM_MANAGER_USER // Ambil dari environment jika tidak ada di credential
+                            sshUser = env.SWARM_MANAGER_USER 
                             if (sshUser == null || sshUser.trim().isEmpty()){
-                                sshUser = 'root' // Fallback terakhir
+                                sshUser = 'root' 
                                 echo "Warning: SSH Username not found in credentials or SWARM_MANAGER_USER, defaulting to '${sshUser}'."
                             }
                         }
@@ -200,29 +200,29 @@ pipeline {
                         def remoteStackFile = "${stackPath}/${stackFileNameOnRepo}"
                         def stackNameInSwarm = "alifsmart_apigw"
                         
-                        // Mengubah path file kunci ke format Windows untuk icacls dan ssh.exe
+                        // Mengubah path file kunci ke format Windows
                         def windowsSshKeyPath = env.SSH_KEY_FILE_PATH_FROM_JENKINS.replace('/', '\\')
 
                         echo "Target remote login: ${sshTarget}"
-                        echo "SSH Key file path (Jenkins temporary): ${env.SSH_KEY_FILE_PATH_FROM_JENKINS}"
                         echo "SSH Key file path (Windows format): ${windowsSshKeyPath}"
 
-                        // LANGKAH KRITIS: Mencoba mengatur izin file kunci di Windows
                         echo "Attempting to set secure permissions for SSH key file: ${windowsSshKeyPath}"
                         try {
-                            powershell "icacls \`"${windowsSshKeyPath}\`" /inheritance:r"
-                            powershell "icacls \`"${windowsSshKeyPath}\`" /grant \`"${env:USERNAME}\`":(F)"
-                            powershell "icacls \`"${windowsSshKeyPath}\`" /grant \`"SYSTEM\`":(F)"
-                            // Perbaikan: Gunakan Out-Null untuk menekan output
-                            powershell "icacls \`"${windowsSshKeyPath}\`" /remove:g \`"BUILTIN\\Users\`" /T /C /Q | Out-Null"
+                            // PERBAIKAN QUOTING DI SINI:
+                            // Gunakan kutip ganda untuk string Groovy, dan escape kutip ganda internal untuk PowerShell dengan backslash (\").
+                            // Variabel Groovy ${windowsSshKeyPath} dan ${env:USERNAME} akan diinterpolasi dengan benar.
+                            powershell "icacls \"${windowsSshKeyPath}\" /inheritance:r"
+                            powershell "icacls \"${windowsSshKeyPath}\" /grant \"${env:USERNAME}:(F)\"" // Menggunakan env:USERNAME untuk user saat ini di PowerShell
+                            powershell "icacls \"${windowsSshKeyPath}\" /grant \"SYSTEM:(F)\""
+                            powershell "icacls \"${windowsSshKeyPath}\" /remove:g \"BUILTIN\\Users\" /T /C /Q | Out-Null"
                             echo 'Permissions set (or attempted) for SSH key file.'
                         } catch (permErr) {
                             echo "Warning: Failed to set permissions on SSH key file. SSH might still fail. Error: ${permErr.getMessage()}"
                         }
                         
                         // Opsi SSH, menggunakan path file kunci yang sudah di-format untuk Windows
-                        // Quoting dengan backtick `"` penting untuk PowerShell jika path mengandung spasi
-                        def sshOpts = "-i \`"${windowsSshKeyPath}\`" -o StrictHostKeyChecking=no -o UserKnownHostsFile=nul -o LogLevel=ERROR"
+                        // PERBAIKAN QUOTING DI SINI:
+                        def sshOpts = "-i \"${windowsSshKeyPath}\" -o StrictHostKeyChecking=no -o UserKnownHostsFile=nul -o LogLevel=ERROR"
 
                         echo "Creating remote directory: ${stackPath}"
                         powershell "ssh ${sshOpts} ${sshTarget} 'mkdir -p ${stackPath}'"
@@ -238,7 +238,7 @@ pipeline {
                         export ENV_REDIS_HOST='${env.ENV_REDIS_HOST}'; \\
                         export ENV_REDIS_PORT='${env.ENV_REDIS_PORT}'; \\
                         export ENV_REDIS_TLS_ENABLED='${env.ENV_REDIS_TLS_ENABLED}'; \\
-                        echo 'Deploying stack ${stackNameInSwarm} with image ${env.DOCKER_HUB_USERNAME}/${env.DOCKER_IMAGE_NAME}:latest...'; \\
+                        echo 'Deploying stack ${stackNameInSwarm}...'; \\
                         docker stack deploy -c '${remoteStackFile}' '${stackNameInSwarm}' --with-registry-auth --prune
                         """.trim().replaceAll("\\n", " ")
 
