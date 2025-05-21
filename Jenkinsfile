@@ -18,9 +18,9 @@ pipeline {
         ENV_REDIS_TLS_ENABLED = credentials('redis_tls_is_enabled')
 
         // Detail Swarm Manager & ID Kredensial SSH (GANTI DENGAN ID YANG BENAR DARI JENKINS ANDA)
-        SWARM_MANAGER_SSH_CREDENTIALS_ID = 'ssh_credential_id'
+        SWARM_MANAGER_SSH_CREDENTIALS_ID = 'ssh_credential_id' // ID Kredensial SSH Anda
         SWARM_MANAGER_IP = '47.84.46.116' // IP Server 1 Swarm Manager Anda
-        SWARM_MANAGER_USER = 'root'
+        SWARM_MANAGER_USER = 'root'       // Pastikan ini user SSH yang benar untuk Swarm Manager
         
         // ID Kredensial Docker Hub (GANTI DENGAN ID YANG BENAR DARI JENKINS ANDA)
         DOCKER_HUB_CREDENTIALS_ID = 'docker_credential_id'
@@ -43,10 +43,10 @@ pipeline {
         stage('Install Dependencies & Test') {
             steps {
                 echo "Installing dependencies and running tests inside Docker..."
-                // Menggunakan PowerShell untuk menjalankan perintah docker run
+                // Menggunakan bat untuk menjalankan perintah docker run di Windows.
                 // Bagian sh -c "..." di dalam container tetap karena container adalah Linux (node:18-alpine)
-                // ${PWD} adalah cara PowerShell untuk mendapatkan direktori kerja saat ini
-                powershell 'docker run --rm -v "${PWD}:/app" -w /app node:18-alpine sh -c "npm ci && npm run test -- --passWithNoTests"'
+                // %CD% adalah cara Command Prompt untuk mendapatkan direktori kerja saat ini.
+                bat 'docker run --rm -v "%CD%:/app" -w /app node:18-alpine sh -c "npm ci && npm run test -- --passWithNoTests"'
                 echo "Dependencies installed and tests completed."
             }
         }
@@ -58,31 +58,28 @@ pipeline {
                     def fullImageNameForScan = "${env.DOCKER_HUB_USERNAME}/${env.DOCKER_IMAGE_NAME}:scan-${env.BUILD_NUMBER}"
 
                     echo "Building temporary image for scan: ${fullImageNameForScan}"
-                    // docker.build() sudah lintas platform, tidak perlu diubah dari sh/powershell di sini
                     docker.withRegistry('https://index.docker.io/v1/', env.DOCKER_HUB_CREDENTIALS_ID) {
                         def scanImage = docker.build(fullImageNameForScan, "-f Dockerfile .")
-                        // Tidak perlu push image scan ini ke registry
                     }
                     
                     echo "Scanning image ${fullImageNameForScan} for vulnerabilities..."
-                    // Menggunakan powershell untuk menjalankan Trivy.
+                    // Menggunakan bat untuk menjalankan Trivy.
                     // Asumsikan 'trivy.exe' ada di PATH Windows Anda.
                     def trivyScanCommand = "trivy image --exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed --ignore-ids CVE-2024-21538 ${fullImageNameForScan}"
-                    // Jika Anda menjalankan Trivy via Docker (direkomendasikan jika trivy.exe tidak di PATH):
+                    // Jika Anda menjalankan Trivy via Docker:
                     // trivyScanCommand = "docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image --exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed --ignore-ids CVE-2024-21538 ${fullImageNameForScan}"
                     
                     try {
-                        powershell "${trivyScanCommand}"
+                        bat "${trivyScanCommand}" // Menggunakan bat
                         echo "Trivy scan passed or ignored vulnerabilities did not cause failure."
                     } catch (err) {
                         echo "Trivy scan failed or found unignored CRITICAL/HIGH vulnerabilities. Error: ${err.getMessage()}"
-                        // Jika Anda ingin pipeline GAGAL jika ada temuan serius yang tidak diabaikan:
-                        // error("Trivy scan found unignored CRITICAL/HIGH vulnerabilities or an error occurred.")
+                        // error("Trivy scan found unignored CRITICAL/HIGH vulnerabilities or an error occurred.") // Uncomment untuk menggagalkan pipeline
                     }
                     
                     echo "Cleaning up scan image (optional)..."
                     try {
-                        powershell "docker rmi ${fullImageNameForScan}"
+                        bat "docker rmi ${fullImageNameForScan}" // Menggunakan bat
                     } catch (cleanupErr) {
                         echo "Warning: Failed to remove scan image ${fullImageNameForScan}. Error: ${cleanupErr.getMessage()}"
                     }
@@ -99,9 +96,7 @@ pipeline {
                     def buildTag = env.BUILD_NUMBER 
                     def latestTag = "latest"
 
-                    // Menggunakan docker.withRegistry untuk login, build, tag, dan push yang terintegrasi
                     docker.withRegistry("https://index.docker.io/v1/", env.DOCKER_HUB_CREDENTIALS_ID) {
-                        
                         echo "Building image ${imageName}:${buildTag}..."
                         def customImage = docker.build("${imageName}:${buildTag}", "-f Dockerfile .")
 
@@ -119,66 +114,63 @@ pipeline {
             }
         }
 
-                stage('Deploy to Docker Swarm') {
+        stage('Deploy to Docker Swarm') {
             steps {
                 echo "Preparing to deploy to Docker Swarm..."
-                // Menggunakan plugin SSH Agent
+                // Menggunakan plugin SSH Agent untuk menangani kunci SSH.
+                // Pastikan plugin SSH Agent terinstal dan layanan "OpenSSH Authentication Agent" berjalan di Windows.
                 sshagent(credentials: [env.SWARM_MANAGER_SSH_CREDENTIALS_ID]) {
-                    // Di dalam blok sshagent, kunci akan dimuat.
-                    // Kita akan menggunakan SWARM_MANAGER_USER dari environment.
+                    // Di dalam blok sshagent, kunci SSH dari kredensial env.SWARM_MANAGER_SSH_CREDENTIALS_ID
+                    // akan secara otomatis dimuat dan digunakan oleh perintah ssh/scp.
+                    // Anda tidak perlu lagi merujuk ke file kunci privat secara manual (-i path_ke_kunci).
                     script {
-                        def sshUser = env.SWARM_MANAGER_USER // Ambil dari environment block
-                        if (!sshUser) {
-                             // Fallback jika SWARM_MANAGER_USER tidak diset di environment.
-                             // Pastikan ini user yang benar untuk SSH ke Swarm Manager Anda.
-                            sshUser = 'root' 
-                            echo "Warning: SWARM_MANAGER_USER not defined in environment, defaulting to '${sshUser}'. Please define it for clarity."
+                        // Menggunakan SWARM_MANAGER_USER dari environment block.
+                        // Pastikan SWARM_MANAGER_USER sudah didefinisikan dengan benar di blok environment.
+                        if (env.SWARM_MANAGER_USER == null || env.SWARM_MANAGER_USER.trim().isEmpty()) {
+                            error("SWARM_MANAGER_USER environment variable is not set or is empty. Please define it in the environment block.")
                         }
-
+                        def sshUser = env.SWARM_MANAGER_USER
                         def remoteLogin = "${sshUser}@${env.SWARM_MANAGER_IP}"
                         def remoteStackPath = "/opt/stacks/${env.DOCKER_IMAGE_NAME}" 
                         def stackFileNameInRepo = "api-gateway-stack.yml" 
                         def stackNameInSwarm = "alifsmart_apigw"
 
-                        // Opsi untuk SSH. -i tidak diperlukan lagi karena sshagent
-                        // Path ke file kunci privat tidak lagi dirujuk secara manual di sini.
+                        // Opsi untuk SSH. -i tidak diperlukan lagi karena sshagent.
+                        // UserKnownHostsFile=nul adalah untuk Windows agar tidak menanyakan host key,
+                        // tapi pastikan Anda sadar implikasi keamanannya atau sudah menambahkan host key secara manual.
                         def sshOptions = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=nul"
 
+                        echo "Target remote login: ${remoteLogin}"
                         echo "Creating remote directory ${remoteStackPath} on ${remoteLogin}..."
-                        // Menggunakan bat untuk memanggil ssh.exe
-                        // Perintah remote 'mkdir -p ...' diapit kutip tunggal untuk shell remote (Linux)
-                        bat "ssh ${sshOptions} ${remoteLogin} \"mkdir -p ${remoteStackPath}\""
+                        // Menggunakan powershell untuk memanggil ssh.exe
+                        // Perintah remote 'mkdir -p ...' diapit kutip tunggal untuk shell remote (Linux).
+                        // Backtick ` sebelum kutip ganda di perintah remote adalah escape untuk PowerShell agar kutip ganda diinterpretasikan literal.
+                        powershell "ssh ${sshOptions} ${remoteLogin} \`"mkdir -p ${remoteStackPath}\`""
                         
                         echo "Copying ${stackFileNameInRepo} to ${remoteLogin}:${remoteStackPath}/${stackFileNameInRepo}..."
-                        // Menggunakan bat untuk memanggil scp.exe
-                        // .\\ untuk path relatif di Windows
-                        bat "scp ${sshOptions} .\\${stackFileNameInRepo} ${remoteLogin}:${remoteStackPath}/${stackFileNameInRepo}"
+                        // Menggunakan powershell untuk memanggil scp.exe. Path relatif Windows: .\\
+                        powershell "scp ${sshOptions} .\\${stackFileNameInRepo} ${remoteLogin}:${remoteStackPath}/${stackFileNameInRepo}"
                         
                         echo "Deploying stack ${stackNameInSwarm} on Swarm Manager ${remoteLogin}..."
                         // Perintah deployCommandOnRemote akan dieksekusi di shell Linux remote server.
-                        // Kita buat menjadi satu baris dengan mengganti newline dengan '; ' agar lebih aman untuk bat
-                        // Atau kita bisa mencoba mengirimnya sebagai string multi-baris jika ssh client & server menanganinya dengan baik.
-                        // Untuk bat, mengirim string multi-baris yang sangat panjang bisa tricky.
-                        // Alternatif: simpan deployCommandOnRemote ke file .sh lalu scp dan eksekusi file .sh tersebut.
-                        // Untuk sekarang, kita coba kirim langsung.
-                        
-                        // Variabel environment yang akan diekspor di remote
-                        def remoteExports = "export DOCKER_HUB_USERNAME='${env.DOCKER_HUB_USERNAME}'; " +
-                                            "export DOCKER_IMAGE_NAME='${env.DOCKER_IMAGE_NAME}'; " +
-                                            "export IMAGE_TAG='latest'; " +
-                                            "export ENV_REDIS_HOST='${env.ENV_REDIS_HOST}'; " +
-                                            "export ENV_REDIS_PORT='${env.ENV_REDIS_PORT}'; " +
-                                            "export ENV_REDIS_TLS_ENABLED='${env.ENV_REDIS_TLS_ENABLED}'; "
-                        
-                        def remoteDockerCommand = "echo 'Deploying stack ${stackNameInSwarm} with image ${env.DOCKER_HUB_USERNAME}/${env.DOCKER_IMAGE_NAME}:latest...'; " +
-                                                  "docker stack deploy -c '${remoteStackPath}/${stackFileNameInRepo}' '${stackNameInSwarm}' --with-registry-auth"
+                        // String Groovy multi-baris ini akan dilewatkan sebagai satu argumen ke ssh.
+                        def deployCommandOnRemote = """
+                        export DOCKER_HUB_USERNAME='${env.DOCKER_HUB_USERNAME}'; \\
+                        export DOCKER_IMAGE_NAME='${env.DOCKER_IMAGE_NAME}'; \\
+                        export IMAGE_TAG='latest'; \\
+                        export ENV_REDIS_HOST='${env.ENV_REDIS_HOST}'; \\
+                        export ENV_REDIS_PORT='${env.ENV_REDIS_PORT}'; \\
+                        export ENV_REDIS_TLS_ENABLED='${env.ENV_REDIS_TLS_ENABLED}'; \\
+                        echo 'Deploying stack ${stackNameInSwarm} with image ${env.DOCKER_HUB_USERNAME}/${env.DOCKER_IMAGE_NAME}:latest...'; \\
+                        docker stack deploy \\
+                            -c '${remoteStackPath}/${stackFileNameInRepo}' \\
+                            '${stackNameInSwarm}' \\
+                            --with-registry-auth
+                        """.trim().replaceAll("\\n", " ") // Mengubah newline menjadi spasi untuk dikirim sebagai satu baris perintah
 
-                        // Gabungkan semua perintah remote menjadi satu string, dipisahkan oleh '&&' atau ';'
-                        // Penggunaan kutip ganda di sekitar keseluruhan perintah untuk ssh sangat penting.
-                        def fullRemoteCommand = "${remoteExports} ${remoteDockerCommand}"
-
-                        // Menggunakan bat untuk memanggil ssh.exe dengan perintah yang sudah diformat
-                        bat "ssh ${sshOptions} ${remoteLogin} \"${fullRemoteCommand}\""
+                        // Mengapit seluruh deployCommandOnRemote dengan kutip ganda agar dikirim sebagai satu argumen ke ssh.
+                        // Ini penting agar PowerShell dan kemudian ssh menanganinya dengan benar.
+                        powershell "ssh ${sshOptions} ${remoteLogin} \"${deployCommandOnRemote}\""
                         echo "Deployment to Docker Swarm initiated."
                     }
                 }
