@@ -60,7 +60,7 @@ pipeline {
                         -e ENV_REDIS_HOST=${env.ENV_REDIS_HOST} \\
                         -e ENV_REDIS_PORT=${env.ENV_REDIS_PORT} \\
                         -e ENV_REDIS_TLS_ENABLED=${env.ENV_REDIS_TLS_ENABLED} \\
-                        node:18-alpine sh -c 'npm ci && npm run test -- --passWithNoTests'
+                        node:18-alpine sh -c 'npm install && npm run test -- --passWithNoTests'
                 """
                 echo "Dependencies installed and tests completed."
             }
