@@ -1,45 +1,53 @@
+// Jenkinsfile
 pipeline {
-    agent any
+    agent any // Pastikan agent ini memiliki Docker & Git terinstal dan dikonfigurasi dengan benar
 
     tools {
+        // Nama instalasi Git dari Manage Jenkins > Tools
         git 'Default'
     }
 
     environment {
-        // Docker Hub Configuration
+        // Konfigurasi Docker Image
         DOCKER_HUB_USERNAME = 'vitoackerman'
         DOCKER_IMAGE_NAME = 'alifsmart-api-gateway'
 
-        // Redis Credentials (Jenkins Credential IDs)
+        // ID Kredensial Redis dari Jenkins (GANTI DENGAN ID YANG BENAR DARI JENKINS ANDA)
         ENV_REDIS_HOST = credentials('redis_host')
         ENV_REDIS_PORT = credentials('redis_port')
         ENV_REDIS_TLS_ENABLED = credentials('redis_tls_is_enabled')
 
-        // Swarm Manager Configuration
+        // Detail Swarm Manager & ID Kredensial SSH (GANTI DENGAN ID YANG BENAR DARI JENKINS ANDA)
         SWARM_MANAGER_SSH_CREDENTIALS_ID = 'ssh_credential_id'
-        SWARM_MANAGER_IP = '47.84.46.116'
+        SWARM_MANAGER_IP = '47.84.46.116' // IP Server 1 Swarm Manager Anda
         SWARM_MANAGER_USER = 'root'
         
-        // Credential IDs
+        // ID Kredensial Docker Hub (GANTI DENGAN ID YANG BENAR DARI JENKINS ANDA)
         DOCKER_HUB_CREDENTIALS_ID = 'docker_credential_id'
+
+        // ID Kredensial GitHub PAT (GANTI DENGAN ID YANG BENAR DARI JENKINS ANDA)
         GITHUB_CREDENTIALS_ID = 'github_pat'
     }
 
     stages {
-        stage('Checkout Code') {
+        stage('Checkout') {
             steps {
+                echo "Checking out from GitHub repository..."
                 git branch: 'main',
-                    credentialsId: "${env.GITHUB_CREDENTIALS_ID}",
-                    url: 'https://github.com/alifsmart-team/alifsmart-api-gateway.git'
+                    credentialsId: env.GITHUB_CREDENTIALS_ID,
+                    url: 'https://github.com/alifsmart-team/alifsmart-api-gateway.git' // URL Repo Anda
+                echo "Checkout complete."
             }
         }
 
-        stage('Install & Test') {
+        stage('Install Dependencies & Test') {
             steps {
-                bat '''
-                    docker run --rm -v "%CD%:/app" -w /app node:18-alpine ^
-                        sh -c "npm ci && npm run test -- --passWithNoTests"
-                '''
+                echo "Installing dependencies and running tests inside Docker..."
+                // Menggunakan PowerShell untuk menjalankan perintah docker run
+                // Bagian sh -c "..." di dalam container tetap karena container adalah Linux (node:18-alpine)
+                // ${PWD} adalah cara PowerShell untuk mendapatkan direktori kerja saat ini
+                powershell 'docker run --rm -v "${PWD}:/app" -w /app node:18-alpine sh -c "npm ci && npm run test -- --passWithNoTests"'
+                echo "Dependencies installed and tests completed."
             }
         }
 
@@ -47,112 +55,123 @@ pipeline {
             steps {
                 script {
                     echo "Starting security scan with Trivy..."
-                    def scanImage = "<span class="math-inline">\{env\.DOCKER\_HUB\_USERNAME\}/</span>{env.DOCKER_IMAGE_NAME}:scan-${env.BUILD_NUMBER}"
-                    
-                    echo "Building temporary image for scan: ${scanImage}"
+                    def fullImageNameForScan = "${env.DOCKER_HUB_USERNAME}/${env.DOCKER_IMAGE_NAME}:scan-${env.BUILD_NUMBER}"
+
+                    echo "Building temporary image for scan: ${fullImageNameForScan}"
+                    // docker.build() sudah lintas platform, tidak perlu diubah dari sh/powershell di sini
                     docker.withRegistry('https://index.docker.io/v1/', env.DOCKER_HUB_CREDENTIALS_ID) {
-                        docker.build(scanImage, "-f Dockerfile .")
+                        def scanImage = docker.build(fullImageNameForScan, "-f Dockerfile .")
+                        // Tidak perlu push image scan ini ke registry
                     }
                     
-                    echo "Scanning image ${scanImage} for vulnerabilities using locally installed Trivy..."
-                    def trivyOptions = "--exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed --ignore-ids CVE-2024-21538"
+                    echo "Scanning image ${fullImageNameForScan} for vulnerabilities..."
+                    // Menggunakan powershell untuk menjalankan Trivy.
+                    // Asumsikan 'trivy.exe' ada di PATH Windows Anda.
+                    def trivyScanCommand = "trivy image --exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed --ignore-ids CVE-2024-21538 ${fullImageNameForScan}"
+                    // Jika Anda menjalankan Trivy via Docker (direkomendasikan jika trivy.exe tidak di PATH):
+                    // trivyScanCommand = "docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image --exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed --ignore-ids CVE-2024-21538 ${fullImageNameForScan}"
                     
-                    // Perbaikan: Escape kutip ganda untuk PowerShell menggunakan backslash (\") di dalam string Groovy
-                    def trivyScanCommand = "trivy image <span class="math-inline">\{trivyOptions\} \\"</span>{scanImage}\"" // Lebih sederhana dan aman
-
                     try {
-                        powershell trivyScanCommand // Tidak perlu .trim() jika string sudah benar
-                        echo "Trivy scan passed or specified vulnerabilities were ignored."
+                        powershell "${trivyScanCommand}"
+                        echo "Trivy scan passed or ignored vulnerabilities did not cause failure."
                     } catch (err) {
-                        echo "Trivy scan failed or found unignored CRITICAL,HIGH vulnerabilities. Error: <span class="math-inline">\{err\.getMessage\(\)\}"
-// error\("Trivy scan found unignored CRITICAL/HIGH vulnerabilities or an error occurred\."\)
-\}
-echo "Cleaning up scan image \(optional\)\.\.\."
-try \{
-// Perbaikan\: Escape kutip ganda untuk PowerShell
-powershell "docker rmi \\"</span>{scanImage}\""
+                        echo "Trivy scan failed or found unignored CRITICAL/HIGH vulnerabilities. Error: ${err.getMessage()}"
+                        // Jika Anda ingin pipeline GAGAL jika ada temuan serius yang tidak diabaikan:
+                        // error("Trivy scan found unignored CRITICAL/HIGH vulnerabilities or an error occurred.")
+                    }
+                    
+                    echo "Cleaning up scan image (optional)..."
+                    try {
+                        powershell "docker rmi ${fullImageNameForScan}"
                     } catch (cleanupErr) {
-                        echo "Warning: Failed to remove scan image ${scanImage}. Error: ${cleanupErr.getMessage()}"
+                        echo "Warning: Failed to remove scan image ${fullImageNameForScan}. Error: ${cleanupErr.getMessage()}"
                     }
                     echo "Security scan completed."
                 }
             }
         }
 
-        stage('Deploy to Docker Swarm') {
+        stage('Build & Push Docker Image') {
+            steps {
+                script {
+                    echo "Building and pushing Docker image..."
+                    def imageName = "${env.DOCKER_HUB_USERNAME}/${env.DOCKER_IMAGE_NAME}"
+                    def buildTag = env.BUILD_NUMBER 
+                    def latestTag = "latest"
+
+                    // Menggunakan docker.withRegistry untuk login, build, tag, dan push yang terintegrasi
+                    docker.withRegistry("https://index.docker.io/v1/", env.DOCKER_HUB_CREDENTIALS_ID) {
+                        
+                        echo "Building image ${imageName}:${buildTag}..."
+                        def customImage = docker.build("${imageName}:${buildTag}", "-f Dockerfile .")
+
+                        echo "Tagging image ${imageName}:${buildTag} as ${imageName}:${latestTag}..."
+                        customImage.tag(latestTag)
+
+                        echo "Pushing image ${imageName}:${buildTag} to Docker Hub..."
+                        customImage.push(buildTag)
+                        
+                        echo "Pushing image ${imageName}:${latestTag} to Docker Hub..."
+                        customImage.push(latestTag)
+                    }
+                    echo "Docker images pushed successfully."
+                }
+            }
+        }
+
+                stage('Deploy to Docker Swarm') {
             steps {
                 echo "Preparing to deploy to Docker Swarm..."
-                // Menggunakan plugin SSH Agent untuk menangani kunci SSH.
-                // Pastikan plugin SSH Agent terinstal dan layanan "OpenSSH Authentication Agent" berjalan di Windows.
+                // Menggunakan plugin SSH Agent
                 sshagent(credentials: [env.SWARM_MANAGER_SSH_CREDENTIALS_ID]) {
-                    // Di dalam blok sshagent, kunci SSH dari kredensial env.SWARM_MANAGER_SSH_CREDENTIALS_ID
-                    // akan secara otomatis dimuat dan digunakan oleh perintah ssh/scp.
+                    // Di dalam blok sshagent, kunci akan dimuat.
+                    // Kita akan menggunakan SWARM_MANAGER_USER dari environment.
                     script {
-                        // Pastikan SWARM_MANAGER_USER sudah didefinisikan di environment block.
-                        if (env.SWARM_MANAGER_USER == null || env.SWARM_MANAGER_USER.trim().isEmpty()) {
-                            error("SWARM_MANAGER_USER environment variable is not set or is empty. Please define it in the environment block (e.g., SWARM_MANAGER_USER = 'root').")
-                        }
-                        def sshUser = env.SWARM_MANAGER_USER
-                        def sshTarget = "${sshUser}@${env.SWARM_MANAGER_IP}" // contoh: root@47.84.46.116
-                        
-                        // Opsi SSH, -i tidak diperlukan karena sshagent
-                        // LogLevel ERROR untuk mengurangi verbosity, UserKnownHostsFile=nul untuk Windows
-                        def sshOpts = "-o StrictHostKeyChecking=no -o LogLevel=ERROR -o UserKnownHostsFile=nul"
-                        
-                        def stackPath = "/opt/stacks/${env.DOCKER_IMAGE_NAME}" // contoh: /opt/stacks/alifsmart-api-gateway
-                        def stackFileNameOnRepo = "api-gateway-stack.yml" // Nama file di repo Anda
-                        def remoteStackFile = "${stackPath}/${stackFileNameOnRepo}" // Path lengkap file di remote
-                        def stackNameInSwarm = "alifsmart_apigw" // Nama stack di Swarm
+                        def remoteLogin = "${env.SWARM_MANAGER_USER}@${env.SWARM_MANAGER_IP}"
+                        def remoteStackPath = "/opt/stacks/${env.DOCKER_IMAGE_NAME}" 
+                        def stackFileNameInRepo = "api-gateway-stack.yml" 
+                        def stackNameInSwarm = "alifsmart_apigw"
 
-                        echo "Target remote login: ${sshTarget}"
-                        
-                        // 1. Membuat direktori di server remote jika belum ada
-                        echo "Creating remote directory: ${stackPath}"
-                        // Perintah 'mkdir -p ...' diapit kutip tunggal untuk shell remote Linux.
-                        // Seluruh perintah untuk ssh diapit kutip ganda untuk PowerShell.
-                        powershell "ssh ${sshOpts} ${sshTarget} 'mkdir -p ${stackPath}'"
-                        
-                        // 2. Menyalin file stack dari workspace Jenkins ke server remote
-                        echo "Copying local .\\${stackFileNameOnRepo} to ${sshTarget}:${remoteStackFile}"
-                        // Menggunakan .\\ untuk path relatif di Windows untuk sumber scp
-                        powershell "scp ${sshOpts} .\\${stackFileNameOnRepo} ${sshTarget}:${remoteStackFile}"
-                        
-                        // 3. Menyiapkan dan menjalankan perintah deployment di server remote
-                        echo "Deploying stack ${stackNameInSwarm} on Swarm Manager..."
-                        // Variabel environment yang perlu di-export di remote sebelum deploy
-                        // (jika stack file Anda menggunakan substitusi variabel dari environment)
-                        def remoteExports = "export DOCKER_HUB_USERNAME='${env.DOCKER_HUB_USERNAME}'; " +
-                                            "export DOCKER_IMAGE_NAME='${env.DOCKER_IMAGE_NAME}'; " +
-                                            "export IMAGE_TAG='latest'; " + // Atau gunakan env.BUILD_NUMBER jika Anda ingin tag spesifik build
-                                            "export ENV_REDIS_HOST='${env.ENV_REDIS_HOST}'; " +
-                                            "export ENV_REDIS_PORT='${env.ENV_REDIS_PORT}'; " +
-                                            "export ENV_REDIS_TLS_ENABLED='${env.ENV_REDIS_TLS_ENABLED}'; "
-                        
-                        // Perintah docker stack deploy
-                        def dockerDeployCommand = "docker stack deploy -c '${remoteStackFile}' '${stackNameInSwarm}' --with-registry-auth --prune"
-                        
-                        // Gabungkan perintah export dan docker deploy untuk dieksekusi di remote
-                        def fullDeployCommandOnRemote = "${remoteExports} echo 'Executing docker stack deploy...'; ${dockerDeployCommand}"
+                        // Opsi untuk SSH. -i tidak diperlukan lagi karena sshagent
+                        def sshOptions = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=nul"
 
-                        // Mengapit seluruh fullDeployCommandOnRemote dengan kutip ganda agar dikirim sebagai satu argumen ke ssh.
-                        powershell "ssh ${sshOpts} ${sshTarget} \"${fullDeployCommandOnRemote}\""
+                        echo "Creating remote directory ${remoteStackPath} on ${remoteLogin}..."
+                        powershell "ssh ${sshOptions} ${remoteLogin} 'mkdir -p ${remoteStackPath}'"
+                        
+                        echo "Copying ${stackFileNameInRepo} to ${remoteLogin}:${remoteStackPath}/${stackFileNameInRepo}..."
+                        powershell "scp ${sshOptions} .\\${stackFileNameInRepo} ${remoteLogin}:${remoteStackPath}/${stackFileNameInRepo}"
+                        
+                        echo "Deploying stack ${stackNameInSwarm} on Swarm Manager ${remoteLogin}..."
+                        def deployCommandOnRemote = """
+                        export DOCKER_HUB_USERNAME='${env.DOCKER_HUB_USERNAME}'; \\
+                        export DOCKER_IMAGE_NAME='${env.DOCKER_IMAGE_NAME}'; \\
+                        export IMAGE_TAG='latest'; \\
+                        export ENV_REDIS_HOST='${env.ENV_REDIS_HOST}'; \\
+                        export ENV_REDIS_PORT='${env.ENV_REDIS_PORT}'; \\
+                        export ENV_REDIS_TLS_ENABLED='${env.ENV_REDIS_TLS_ENABLED}'; \\
+                        echo 'Deploying stack ${stackNameInSwarm} with image ${env.DOCKER_HUB_USERNAME}/${env.DOCKER_IMAGE_NAME}:latest...'; \\
+                        docker stack deploy \\
+                            -c '${remoteStackPath}/${stackFileNameInRepo}' \\
+                            '${stackNameInSwarm}' \\
+                            --with-registry-auth
+                        """
+                        powershell "ssh ${sshOptions} ${remoteLogin} \"${deployCommandOnRemote}\""
                         echo "Deployment to Docker Swarm initiated."
                     }
                 }
             }
         }
+    } // Akhir stages
 
-    post {
+    post { 
         always {
-            echo "Pipeline execution completed"
+            echo "Pipeline finished."
         }
         success {
-            echo "SUCCESS: Application deployed to Swarm cluster"
-            slackSend color: 'good', message: "Deployment succeeded: ${env.JOB_NAME} ${env.BUILD_NUMBER}"
+            echo "Pipeline sukses! Aplikasi telah di-build, di-push, dan (semoga) terdeploy dengan baik."
         }
         failure {
-            echo "FAILURE: Pipeline execution failed"
-            slackSend color: 'danger', message: "Deployment failed: ${env.JOB_NAME} ${env.BUILD_NUMBER}"
+            echo "Pipeline gagal! Silakan periksa log untuk detailnya."
         }
     }
 }
