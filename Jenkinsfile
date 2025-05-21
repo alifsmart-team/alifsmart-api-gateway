@@ -7,7 +7,6 @@ pipeline {
     }
 
     environment {
-        // ... (environment variables lainnya tetap sama) ...
         DOCKER_HUB_USERNAME = 'vitoackerman'
         DOCKER_IMAGE_NAME   = 'alifsmart-api-gateway'
         FULL_APP_IMAGE_NAME = "${DOCKER_HUB_USERNAME}/${DOCKER_IMAGE_NAME}"
@@ -20,9 +19,10 @@ pipeline {
         REMOTE_APP_DIR                   = '/opt/stacks/alifsmart-api-gateway'
         DOCKER_HUB_CREDENTIALS_ID = 'docker_credential_id'
         GITHUB_CREDENTIALS_ID = 'github_pat'
+        TRIVY_VERSION = '0.55.0'
         
-        // Menentukan versi Trivy yang akan digunakan
-        TRIVY_VERSION = '0.55.0' // Ganti dengan versi spesifik yang Anda inginkan
+        // Menentukan versi Node.js yang akan digunakan
+        NODE_VERSION_ALPINE = 'node:20-alpine' // <--- TAMBAHKAN ATAU GUNAKAN VARIABEL INI
     }
 
     stages {
@@ -39,7 +39,7 @@ pipeline {
 
         stage('Install Dependencies & Test') {
             steps {
-                echo "Installing dependencies and running tests inside Docker..."
+                echo "Installing dependencies and running tests inside Docker using ${env.NODE_VERSION_ALPINE}..."
                 sh """
                     docker run --rm \\
                         -v "${env.WORKSPACE}:/app" \\
@@ -47,8 +47,8 @@ pipeline {
                         -e ENV_REDIS_HOST=${env.ENV_REDIS_HOST} \\
                         -e ENV_REDIS_PORT=${env.ENV_REDIS_PORT} \\
                         -e ENV_REDIS_TLS_ENABLED=${env.ENV_REDIS_TLS_ENABLED} \\
-                        node:18-alpine sh -c 'echo "Cleaning npm cache..." && npm cache clean --force && echo "Running npm ci and tests..." && npm ci && npm run test -- --passWithNoTests'
-                """
+                        ${env.NODE_VERSION_ALPINE} sh -c 'echo "Cleaning npm cache..." && npm cache clean --force && echo "Running npm ci and tests..." && npm ci && npm run test -- --passWithNoTests'
+                """ // <--- UBAH DI SINI
                 echo "Dependencies installed and tests completed."
             }
         }
@@ -56,23 +56,22 @@ pipeline {
         stage('Security Scan (Trivy)') {
             steps {
                 script {
-                    echo "Verifying production dependencies for cross-spawn in workspace..."
+                    echo "Verifying production dependencies for cross-spawn in workspace using ${env.NODE_VERSION_ALPINE}..."
                     sh """
                         docker run --rm \\
                             -v "${env.WORKSPACE}:/app" \\
                             -w /app \\
-                            node:18-alpine sh -c "echo '--- Running npm ls cross-spawn --omit=dev ---' && (npm ls cross-spawn --omit=dev --long || echo 'cross-spawn not found by ls or ls failed to find it as a prod dep')"
-                    """
+                            ${env.NODE_VERSION_ALPINE} sh -c "echo '--- Running npm ls cross-spawn --omit=dev ---' && (npm ls cross-spawn --omit=dev --long || echo 'cross-spawn not found by ls or ls failed to find it as a prod dep')"
+                    """ // <--- UBAH DI SINI
                     echo "Starting security scan with Trivy version ${env.TRIVY_VERSION}..."
                     def fullImageNameForScan = "${env.FULL_APP_IMAGE_NAME}:scan-${env.BUILD_NUMBER}"
 
-                    echo "Building temporary image for scan (with --no-cache): ${fullImageNameForScan}"
+                    echo "Building temporary image for scan (with --no-cache, using Node 20 from Dockerfile): ${fullImageNameForScan}"
+                    // Dockerfile sekarang akan menggunakan FROM node:20-alpine
                     docker.build(fullImageNameForScan, "--no-cache -f Dockerfile .")
                     
                     echo "Ensuring Trivy image ${env.TRIVY_VERSION} is available..."
-                    // Opsional: Tarik image Trivy versi spesifik jika belum ada atau untuk memastikan
                     // sh "docker pull aquasec/trivy:${env.TRIVY_VERSION}" 
-                    // Biasanya, Docker akan menariknya secara otomatis jika belum ada saat 'docker run'.
 
                     echo "Cleaning persistent Trivy cache volume using Trivy ${env.TRIVY_VERSION}..."
                     sh """
@@ -82,7 +81,7 @@ pipeline {
                     """
                     echo "Persistent Trivy cache volume 'trivycache' cleaned."
 
-                    echo "Scanning image ${fullImageNameForScan} for vulnerabilities with Trivy ${env.TRIVY_VERSION} (without using persistent cache for the scan itself)..."
+                    echo "Scanning image ${fullImageNameForScan} for vulnerabilities with Trivy ${env.TRIVY_VERSION}..."
                     try {
                         sh """
                             docker run --rm \\
@@ -93,10 +92,9 @@ pipeline {
                                 --exit-code 1 \\
                                 --severity CRITICAL,HIGH \\
                                 --ignore-unfixed \\
-                                ${fullImageNameForScan}
+                                ${fullImageNameForScan} 
+                                // Jika Anda menggunakan .trivyignore, pastikan tidak ada flag --ignore-ids di sini
                         """
-                        // Jika Anda memutuskan untuk menggunakan .trivyignore secara eksklusif,
-                        // hapus baris --ignore-ids CVE-2024-21538 di atas.
                         echo "Trivy scan passed or specified vulnerabilities were ignored."
                     } catch (err) {
                         echo "Trivy scan failed or found unignored CRITICAL/HIGH vulnerabilities. Error: ${err.getMessage()}"
@@ -114,18 +112,15 @@ pipeline {
             }
         }
 
-        // ... (stage 'Build & Push Docker Image' dan 'Deploy via Docker SSH' tetap sama) ...
-        // Pastikan untuk memperbarui panggilan ke Trivy di tempat lain jika ada.
-
         stage('Build & Push Docker Image') {
             steps {
                 script {
-                    echo "Building and pushing Docker image..."
+                    echo "Building and pushing Docker image (using Node 20 from Dockerfile)..."
                     def buildTag = env.BUILD_NUMBER 
                     def latestTag = "latest"
 
                     docker.withRegistry("https://index.docker.io/v1/", env.DOCKER_HUB_CREDENTIALS_ID) {
-                        
+                        // Dockerfile sekarang akan menggunakan FROM node:20-alpine
                         echo "Building image ${env.FULL_APP_IMAGE_NAME}:${buildTag}..."
                         def customImage = docker.build("${env.FULL_APP_IMAGE_NAME}:${buildTag}", "-f Dockerfile .")
 
