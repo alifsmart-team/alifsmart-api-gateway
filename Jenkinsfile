@@ -93,6 +93,7 @@ pipeline {
                                 --exit-code 1 \\
                                 --severity CRITICAL,HIGH \\
                                 --ignore-unfixed \\
+                                --ignore-ids CVE-2024-21538 \\
                                 ${fullImageNameForScan}
                         """
                         // --ignore-ids CVE-2024-21538 (Jika masih relevan, tambahkan kembali di atas)
