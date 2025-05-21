@@ -47,35 +47,30 @@ pipeline {
             steps {
                 script {
                     echo "Starting security scan with Trivy..."
-                    // Menggunakan env. untuk mengakses variabel environment di dalam script block
-                    def scanImage = "${env.DOCKER_HUB_USERNAME}/${env.DOCKER_IMAGE_NAME}:scan-${env.BUILD_NUMBER}"
+                    def scanImage = "<span class="math-inline">\{env\.DOCKER\_HUB\_USERNAME\}/</span>{env.DOCKER_IMAGE_NAME}:scan-${env.BUILD_NUMBER}"
                     
                     echo "Building temporary image for scan: ${scanImage}"
-                    // Menggunakan docker.build dari plugin Docker Pipeline (sudah lintas platform)
                     docker.withRegistry('https://index.docker.io/v1/', env.DOCKER_HUB_CREDENTIALS_ID) {
-                        docker.build(scanImage, "-f Dockerfile .") 
-                        // Tidak perlu push image scan ini ke registry jika hanya untuk scan lokal
+                        docker.build(scanImage, "-f Dockerfile .")
                     }
                     
                     echo "Scanning image ${scanImage} for vulnerabilities using locally installed Trivy..."
-                    // Menggunakan powershell untuk menjalankan trivy.exe yang ada di PATH
-                    // Pastikan trivy.exe terinstal dan ada di PATH Windows Anda.
                     def trivyOptions = "--exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed --ignore-ids CVE-2024-21538"
-                    def trivyScanCommand = "trivy image ${trivyOptions} \`"${scanImage}\`"" // Mengapit ${scanImage} dengan kutip dan escape untuk PowerShell
+                    
+                    // Perbaikan: Escape kutip ganda untuk PowerShell menggunakan backslash (\") di dalam string Groovy
+                    def trivyScanCommand = "trivy image <span class="math-inline">\{trivyOptions\} \\"</span>{scanImage}\"" // Lebih sederhana dan aman
 
                     try {
-                        powershell trivyScanCommand.trim()
+                        powershell trivyScanCommand // Tidak perlu .trim() jika string sudah benar
                         echo "Trivy scan passed or specified vulnerabilities were ignored."
                     } catch (err) {
-                        echo "Trivy scan failed or found unignored CRITICAL,HIGH vulnerabilities. Error: ${err.getMessage()}"
-                        // Jika Anda ingin pipeline GAGAL jika ada temuan serius yang tidak diabaikan:
-                        // error("Trivy scan found unignored CRITICAL/HIGH vulnerabilities or an error occurred.")
-                    }
-                    
-                    echo "Cleaning up scan image (optional)..."
-                    try {
-                        // Menggunakan powershell untuk docker rmi
-                        powershell "docker rmi \`"${scanImage}\`""
+                        echo "Trivy scan failed or found unignored CRITICAL,HIGH vulnerabilities. Error: <span class="math-inline">\{err\.getMessage\(\)\}"
+// error\("Trivy scan found unignored CRITICAL/HIGH vulnerabilities or an error occurred\."\)
+\}
+echo "Cleaning up scan image \(optional\)\.\.\."
+try \{
+// Perbaikan\: Escape kutip ganda untuk PowerShell
+powershell "docker rmi \\"</span>{scanImage}\""
                     } catch (cleanupErr) {
                         echo "Warning: Failed to remove scan image ${scanImage}. Error: ${cleanupErr.getMessage()}"
                     }
