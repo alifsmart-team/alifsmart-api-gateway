@@ -122,54 +122,45 @@ pipeline {
         stage('Deploy via Docker SSH') {
             steps {
                 script {
-                    // Menggunakan withCredentials dengan sshUserPrivateKey
-                    withCredentials([sshUserPrivateKey(
-                        credentialsId: env.SWARM_MANAGER_SSH_CREDENTIALS_ID, // ID kredensial SSH Anda
-                        keyFileVariable: 'SSH_PRIVATE_KEY_FILE_PATH',     // Variabel untuk path file kunci
-                        usernameVariable: 'SSH_USER_FROM_CRED'          // Variabel untuk username dari kredensial
-                    )]) {
-                        // Pastikan env.SWARM_MANAGER_USER diisi dari SSH_USER_FROM_CRED atau diset manual jika perlu
-                        def sshUser = env.SSH_USER_FROM_CRED
-                        if (sshUser == null || sshUser.trim().isEmpty()) {
-                            // Jika username tidak diset di kredensial, gunakan dari environment atau set default
-                            sshUser = env.SWARM_MANAGER_USER 
-                            if (sshUser == null || sshUser.trim().isEmpty()){
-                                sshUser = 'root' // Fallback terakhir jika tidak ada sama sekali
-                                echo "Warning: SSH Username not found in credentials or environment, defaulting to '${sshUser}'"
-                            }
-                        }
-                        def sshTarget = "${sshUser}@${env.SWARM_MANAGER_IP}"
-                        def stackPath = "/opt/stacks/${env.DOCKER_IMAGE_NAME}" // Path di server remote
-                        def stackFileNameOnRepo = "api-gateway-stack.yml"    // Nama file di workspace Jenkins
-                        def remoteStackFile = "${stackPath}/${stackFileNameOnRepo}"
-                        def stackNameInSwarm = "alifsmart_apigw"
+                    // Ganti dengan ID kredensial SSH private key Anda
+                    withCredentials([sshUserPrivateKey(credentialsId: 'SSH_DEPLOY_CREDENTIALS_ID', keyFileVariable: 'SSH_PRIVATE_KEY_FILE')]) {
+                        echo "Target remote login: ${REMOTE_USER_HOST}"
+                        echo "Creating remote directory (if not exists): ${REMOTE_APP_DIR}"
+                        // Menggunakan sh bukan powershell
+                        sh """
+                            ssh -i ${SSH_PRIVATE_KEY_FILE} \\
+                                -o StrictHostKeyChecking=no \\
+                                -o UserKnownHostsFile=/dev/null \\
+                                ${REMOTE_USER_HOST} 'mkdir -p ${REMOTE_APP_DIR}'
+                        """
 
-                        // Opsi SSH, sekarang menggunakan path file kunci dari variabel
-                        def sshOpts = "-i \"${env.SSH_PRIVATE_KEY_FILE_PATH}\" -o StrictHostKeyChecking=no -o UserKnownHostsFile=nul -o LogLevel=ERROR"
-                        // Catatan: Anda mungkin perlu menangani izin file %SSH_PRIVATE_KEY_FILE_PATH% di Windows.
-                        // Ini sering menyebabkan error "bad permissions".
-
-                        echo "Target remote login: ${sshTarget}"
-                        echo "Creating remote directory: ${stackPath}"
-                        powershell "ssh ${sshOpts} ${sshTarget} 'mkdir -p ${stackPath}'"
-                        
-                        echo "Copying local .\\${stackFileNameOnRepo} to ${sshTarget}:${remoteStackFile}"
-                        powershell "scp ${sshOpts} .\\${stackFileNameOnRepo} ${sshTarget}:${remoteStackFile}"
-
-                        echo "Deploying stack ${stackNameInSwarm} on Swarm Manager..."
-                        def deployCommandOnRemote = """
-                        export DOCKER_HUB_USERNAME='${env.DOCKER_HUB_USERNAME}'; \\
-                        export DOCKER_IMAGE_NAME='${env.DOCKER_IMAGE_NAME}'; \\
-                        export IMAGE_TAG='latest'; \\
-                        export ENV_REDIS_HOST='${env.ENV_REDIS_HOST}'; \\
-                        export ENV_REDIS_PORT='${env.ENV_REDIS_PORT}'; \\
-                        export ENV_REDIS_TLS_ENABLED='${env.ENV_REDIS_TLS_ENABLED}'; \\
-                        echo 'Deploying stack ${stackNameInSwarm} with image ${env.DOCKER_HUB_USERNAME}/${env.DOCKER_IMAGE_NAME}:latest...'; \\
-                        docker stack deploy -c '${remoteStackFile}' '${stackNameInSwarm}' --with-registry-auth --prune
-                        """.trim().replaceAll("\\n", " ")
-
-                        powershell "ssh ${sshOpts} ${sshTarget} \"${deployCommandOnRemote}\""
-                        echo "Deployment to Docker Swarm initiated."
+                        echo "Deploying application on remote server..."
+                        // Contoh perintah deployment. Sesuaikan dengan kebutuhan Anda.
+                        // Misalnya, jika Anda menggunakan docker-compose:
+                        // 1. Pastikan docker-compose.yml ada di server atau di-copy.
+                        // 2. Tarik image terbaru dan jalankan.
+                        sh """
+                            ssh -i ${SSH_PRIVATE_KEY_FILE} \\
+                                -o StrictHostKeyChecking=no \\
+                                -o UserKnownHostsFile=/dev/null \\
+                                ${REMOTE_USER_HOST} "cd ${REMOTE_APP_DIR} && \\
+                                    echo 'Pulling latest image...' && \\
+                                    docker pull ${APP_IMAGE_NAME}:latest && \\
+                                    echo 'Stopping and removing old container (if any)...' && \\
+                                    docker stop alifsmart-api-gateway-container || true && \\
+                                    docker rm alifsmart-api-gateway-container || true && \\
+                                    echo 'Starting new container...' && \\
+                                    docker run -d --name alifsmart-api-gateway-container \\
+                                        -p 8080:3000 \\
+                                        -e ENV_REDIS_HOST=${ENV_REDIS_HOST} \\
+                                        -e ENV_REDIS_PORT=${ENV_REDIS_PORT} \\
+                                        -e ENV_REDIS_TLS_ENABLED=${ENV_REDIS_TLS_ENABLED} \\
+                                        --restart unless-stopped \\
+                                        ${APP_IMAGE_NAME}:latest"
+                        """
+                        // Jika menggunakan docker-compose, perintahnya bisa seperti:
+                        // sh "ssh -i ... ${REMOTE_USER_HOST} 'cd ${REMOTE_APP_DIR} && docker-compose pull && docker-compose up -d --remove-orphans'"
+                        echo "Deployment commands executed."
                     }
                 }
             }
