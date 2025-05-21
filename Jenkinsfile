@@ -71,7 +71,7 @@ pipeline {
                         sh """
                             docker run --rm \\
                                 -v trivycache:/root/.cache/ \\
-                                aquasec/trivy:${env.TRIVY_VERSION} clean 
+                                aquasec/trivy:${env.TRIVY_VERSION} image --clear-cache
                         """ // <-- Removed --all from here
                     echo "Persistent Trivy cache volume 'trivycache' cleaned."
 
