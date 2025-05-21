@@ -174,80 +174,100 @@ pipeline {
         //         }
         //     }
         // }
-        stage('Deploy to Docker Swarm') {
-            steps {
-                script {
-                    echo "Preparing to deploy to Docker Swarm..."
-                    withCredentials([sshUserPrivateKey(
-                        credentialsId: env.SWARM_MANAGER_SSH_CREDENTIALS_ID,
-                        keyFileVariable: 'SSH_KEY_FILE_PATH_FROM_JENKINS',
-                        // passphraseVariable: 'SSH_KEY_PASSPHRASE', // Uncomment jika kunci Anda ada passphrase
-                        usernameVariable: 'SSH_USER_FROM_CRED'
-                    )]) {
-                        
-                        def sshUser = env.SSH_USER_FROM_CRED
-                        if (sshUser == null || sshUser.trim().isEmpty()) {
-                            sshUser = env.SWARM_MANAGER_USER 
-                            if (sshUser == null || sshUser.trim().isEmpty()){
-                                sshUser = 'root' 
-                                echo "Warning: SSH Username not found in credentials or SWARM_MANAGER_USER, defaulting to '${sshUser}'."
-                            }
-                        }
+        stage('Deploy via Docker SSH using bat and sshagent') {
+    agent any // Pastikan agent Anda memiliki Git (untuk ssh.exe & scp.exe) di PATH
 
-                        def sshTarget = "${sshUser}@${env.SWARM_MANAGER_IP}"
-                        def stackPath = "/opt/stacks/${env.DOCKER_IMAGE_NAME}"
-                        def stackFileNameInRepo = "api-gateway-stack.yml"
-                        def remoteStackFile = "${stackPath}/${stackFileNameOnRepo}"
-                        def stackNameInSwarm = "alifsmart_apigw"
-                        
-                        // Mengubah path file kunci ke format Windows
-                        def windowsSshKeyPath = env.SSH_KEY_FILE_PATH_FROM_JENKINS.replace('/', '\\')
+    environment {
+        // Pastikan variabel-variabel ini tersedia di environment Jenkins Job Anda
+        // atau didefinisikan secara global.
+        // Contoh:
+        // SWARM_MANAGER_IP = '192.168.1.100'
+        // SWARM_MANAGER_SSH_CREDENTIALS_ID = 'id-kredensial-ssh-swarm-manager'
+        // DOCKER_IMAGE_NAME = 'nama-image-docker-saya'
+        // DOCKER_HUB_USERNAME = 'username-dockerhub-saya'
+        // ENV_REDIS_HOST = 'redis.internal'
+        // ENV_REDIS_PORT = '6379'
+        // ENV_REDIS_TLS_ENABLED = 'false'
+        // STACK_FILE_NAME = 'api-gateway-stack.yml' // Bisa juga dari env
+        // DOCKER_STACK_NAME = 'alifsmart_apigw'     // Bisa juga dari env
+    }
 
-                        echo "Target remote login: ${sshTarget}"
-                        echo "SSH Key file path (Windows format): ${windowsSshKeyPath}"
+    steps {
+        // Pastikan env.SWARM_MANAGER_SSH_CREDENTIALS_ID merujuk pada Jenkins credential
+        // bertipe "SSH Username with private key". Username untuk koneksi SSH
+        // diambil dari konfigurasi credential tersebut.
+        sshagent(credentials: [env.SWARM_MANAGER_SSH_CREDENTIALS_ID]) {
+            script {
+                // Ambil variabel dari environment untuk kejelasan
+                def swarmManagerIp = env.SWARM_MANAGER_IP
+                def dockerImageName = env.DOCKER_IMAGE_NAME
+                def dockerHubUsername = env.DOCKER_HUB_USERNAME
+                def redisHost = env.ENV_REDIS_HOST
+                def redisPort = env.ENV_REDIS_PORT
+                def redisTlsEnabled = env.ENV_REDIS_TLS_ENABLED
+                def stackFileName = env.STACK_FILE_NAME ?: "api-gateway-stack.yml" // Default jika tidak diset di env
+                def dockerStackName = env.DOCKER_STACK_NAME ?: "alifsmart_apigw"   // Default jika tidak diset di env
 
-                        echo "Attempting to set secure permissions for SSH key file: ${windowsSshKeyPath}"
-                        try {
-                            // PERBAIKAN QUOTING DI SINI:
-                            // Gunakan kutip ganda untuk string Groovy, dan escape kutip ganda internal untuk PowerShell dengan backslash (\").
-                            // Variabel Groovy ${windowsSshKeyPath} dan ${env:USERNAME} akan diinterpolasi dengan benar.
-                            powershell "icacls \"${windowsSshKeyPath}\" /inheritance:r"
-                            powershell "icacls \"${windowsSshKeyPath}\" /grant \"${env:USERNAME}:(F)\"" // Menggunakan env:USERNAME untuk user saat ini di PowerShell
-                            powershell "icacls \"${windowsSshKeyPath}\" /grant \"SYSTEM:(F)\""
-                            powershell "icacls \"${windowsSshKeyPath}\" /remove:g \"BUILTIN\\Users\" /T /C /Q | Out-Null"
-                            echo 'Permissions set (or attempted) for SSH key file.'
-                        } catch (permErr) {
-                            echo "Warning: Failed to set permissions on SSH key file. SSH might still fail. Error: ${permErr.getMessage()}"
-                        }
-                        
-                        // Opsi SSH, menggunakan path file kunci yang sudah di-format untuk Windows
-                        // PERBAIKAN QUOTING DI SINI:
-                        def sshOpts = "-i \"${windowsSshKeyPath}\" -o StrictHostKeyChecking=no -o UserKnownHostsFile=nul -o LogLevel=ERROR"
-
-                        echo "Creating remote directory: ${stackPath}"
-                        powershell "ssh ${sshOpts} ${sshTarget} 'mkdir -p ${stackPath}'"
-                        
-                        echo "Copying local .\\${stackFileNameInRepo} to ${sshTarget}:${remoteStackFile}"
-                        powershell "scp ${sshOpts} .\\${stackFileNameInRepo} ${sshTarget}:${remoteStackFile}"
-                        
-                        echo "Deploying stack ${stackNameInSwarm} on Swarm Manager..."
-                        def deployCommandOnRemote = """
-                        export DOCKER_HUB_USERNAME='${env.DOCKER_HUB_USERNAME}'; \\
-                        export DOCKER_IMAGE_NAME='${env.DOCKER_IMAGE_NAME}'; \\
-                        export IMAGE_TAG='latest'; \\
-                        export ENV_REDIS_HOST='${env.ENV_REDIS_HOST}'; \\
-                        export ENV_REDIS_PORT='${env.ENV_REDIS_PORT}'; \\
-                        export ENV_REDIS_TLS_ENABLED='${env.ENV_REDIS_TLS_ENABLED}'; \\
-                        echo 'Deploying stack ${stackNameInSwarm}...'; \\
-                        docker stack deploy -c '${remoteStackFile}' '${stackNameInSwarm}' --with-registry-auth --prune
-                        """.trim().replaceAll("\\n", " ")
-
-                        powershell "ssh ${sshOpts} ${sshTarget} \"${deployCommandOnRemote}\""
-                        echo "Deployment to Docker Swarm initiated."
-                    }
+                // Validasi variabel penting
+                if (!swarmManagerIp) {
+                    error "SWARM_MANAGER_IP environment variable is not set."
                 }
+                if (!dockerImageName) {
+                    error "DOCKER_IMAGE_NAME environment variable is not set."
+                }
+                if (!dockerHubUsername) {
+                    error "DOCKER_HUB_USERNAME environment variable is not set."
+                }
+
+                def remoteStackDir = "/opt/stacks/${dockerImageName}"
+                def remoteStackFilePath = "${remoteStackDir}/${stackFileName}"
+
+                // Opsi SSH: -i tidak diperlukan dengan sshagent
+                // UserKnownHostsFile=/dev/null biasanya bekerja dengan ssh.exe dari Git Bash
+                // Jika gagal, coba UserKnownHostsFile=nul
+                def sshOpts = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
+
+                echo "Target remote host: ${swarmManagerIp} (username from credential '${env.SWARM_MANAGER_SSH_CREDENTIALS_ID}')"
+
+                echo "Creating remote directory: ${remoteStackDir}"
+                // Perintah mkdir -p aman dijalankan berkali-kali
+                bat "ssh ${sshOpts} ${swarmManagerIp} \"mkdir -p ${remoteStackDir}\""
+
+                echo "Copying local .\\${stackFileName} to ${swarmManagerIp}:${remoteStackFilePath}"
+                // Menggunakan tanda kutip untuk menangani spasi pada path jika ada (meskipun tidak direkomendasikan)
+                // Pastikan file ${stackFileName} ada di root workspace Jenkins
+                bat "scp ${sshOpts} \"${stackFileName}\" \"${swarmManagerIp}:${remoteStackFilePath}\""
+
+                echo "Deploying stack ${dockerStackName} on Swarm Manager..."
+                // Bangun perintah deploy untuk server remote
+                // Variabel Groovy diinterpolasi SEBELUM dikirim ke bat
+                // Tanda kutip tunggal ('') di dalam perintah adalah untuk shell di server remote
+                def deployCommandOnRemote = """
+                export DOCKER_HUB_USERNAME='${dockerHubUsername}'; \\
+                export DOCKER_IMAGE_NAME='${dockerImageName}'; \\
+                export IMAGE_TAG='latest'; \\
+                export ENV_REDIS_HOST='${redisHost}'; \\
+                export ENV_REDIS_PORT='${redisPort}'; \\
+                export ENV_REDIS_TLS_ENABLED='${redisTlsEnabled}'; \\
+                echo 'Deploying stack ${dockerStackName} with image ${dockerHubUsername}/${dockerImageName}:latest...'; \\
+                docker stack deploy -c '${remoteStackFilePath}' '${dockerStackName}' --with-registry-auth --prune
+                """.trim().replaceAll("\\n", " ") // Hapus newline dan ganti dengan spasi agar jadi satu baris perintah
+
+                // Eksekusi perintah deploy di server remote
+                // Seluruh deployCommandOnRemote diapit "" untuk ssh, yang mana aman karena
+                // di dalamnya menggunakan '' untuk string shell remote.
+                bat "ssh ${sshOpts} ${swarmManagerIp} \"${deployCommandOnRemote}\""
+
+                echo "Deployment to Docker Swarm initiated for stack: ${dockerStackName}."
             }
         }
+    }
+    post {
+        always {
+            echo "Finished Deploy via Docker SSH stage."
+        }
+    }
+}
     } // Akhir stages
 
     post { 
