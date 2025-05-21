@@ -17,8 +17,8 @@ pipeline {
 
         // ID Kredensial Redis dari Jenkins (GANTI DENGAN ID YANG BENAR DARI JENKINS ANDA)
         // Ini akan memuat konten kredensial ke dalam variabel lingkungan.
-        ENV_REDIS_HOST          = credentials('redis_host')
-        ENV_REDIS_PORT          = credentials('redis_port')
+        ENV_REDIS_HOST            = credentials('redis_host')
+        ENV_REDIS_PORT            = credentials('redis_port')
         ENV_REDIS_TLS_ENABLED   = credentials('redis_tls_is_enabled') // Pastikan nilai kredensial ini adalah string 'true' atau 'false'
 
         // Detail Swarm Manager & ID Kredensial SSH
@@ -74,17 +74,20 @@ pipeline {
                     def fullImageNameForScan = "${env.FULL_APP_IMAGE_NAME}:scan-${env.BUILD_NUMBER}"
 
                     echo "Building temporary image for scan: ${fullImageNameForScan}"
-                    // Login ke Docker Hub tidak diperlukan jika image scan hanya untuk penggunaan lokal
-                    // dan base image (node:18-alpine) bersifat publik.
-                    // Jika Dockerfile Anda merujuk image private, maka withRegistry diperlukan di sini.
                     docker.build(fullImageNameForScan, "-f Dockerfile .")
                     
+                    echo "Cleaning Trivy cache before scanning..."
+                    // Menjalankan trivy clean untuk mereset cache
+                    // Pastikan volume 'trivycache' sama dengan yang digunakan untuk scan
+                    sh """
+                        docker run --rm \\
+                            -v trivycache:/root/.cache/ \\
+                            aquasec/trivy:latest clean --all
+                    """
+                    echo "Trivy cache cleaned."
+
                     echo "Scanning image ${fullImageNameForScan} for vulnerabilities..."
-                    // Menggunakan Trivy via Docker untuk portabilitas di agent Linux
-                    // Pastikan Docker socket di-mount jika Trivy perlu mengakses Docker daemon.
                     try {
-                        // Menggunakan sh untuk menjalankan perintah Docker Trivy
-                        // Menambahkan --ignore-ids CVE-2024-21538
                         sh """
                             docker run --rm \\
                                 -v /var/run/docker.sock:/var/run/docker.sock \\
@@ -100,12 +103,10 @@ pipeline {
                         echo "Trivy scan passed or ignored vulnerabilities did not cause failure."
                     } catch (err) {
                         echo "Trivy scan failed or found unignored CRITICAL/HIGH vulnerabilities. Error: ${err.getMessage()}"
-                        // Gagal-kan pipeline jika ada temuan serius
                         error("Trivy scan found unignored CRITICAL/HIGH vulnerabilities or an error occurred.")
                     } finally { // Blok finally untuk memastikan cleanup image scan selalu dicoba
                         echo "Cleaning up scan image (optional)..."
                         try {
-                            // Menggunakan sh untuk menghapus image
                             sh "docker rmi ${fullImageNameForScan} || true" // '|| true' agar tidak error jika image tidak ada
                         } catch (cleanupErr) {
                             echo "Warning: Failed to remove scan image ${fullImageNameForScan}. Error: ${cleanupErr.getMessage()}"
@@ -145,13 +146,11 @@ pipeline {
         stage('Deploy via Docker SSH') {
             steps {
                 script {
-                    // Menggunakan nilai dari env.SWARM_MANAGER_SSH_CREDENTIALS_ID
                     withCredentials([sshUserPrivateKey(credentialsId: env.SWARM_MANAGER_SSH_CREDENTIALS_ID, keyFileVariable: 'SSH_PRIVATE_KEY_FILE')]) {
                         def remoteHost = "${env.SWARM_MANAGER_USER}@${env.SWARM_MANAGER_IP}"
                         
                         echo "Target remote login: ${remoteHost}"
                         echo "Creating remote directory (if not exists): ${env.REMOTE_APP_DIR}"
-                        // Menggunakan sh untuk perintah SSH
                         sh """
                             ssh -i \${SSH_PRIVATE_KEY_FILE} \\
                                 -o StrictHostKeyChecking=no \\
@@ -160,7 +159,6 @@ pipeline {
                         """
 
                         echo "Deploying application on remote server: ${env.FULL_APP_IMAGE_NAME}:latest"
-                        // Sesuaikan perintah deployment berikut ini dengan kebutuhan Anda (misalnya, docker stack deploy untuk Swarm)
                         sh """
                             ssh -i \${SSH_PRIVATE_KEY_FILE} \\
                                 -o StrictHostKeyChecking=no \\
@@ -180,9 +178,6 @@ pipeline {
                                         --restart unless-stopped \\
                                         ${env.FULL_APP_IMAGE_NAME}:latest"
                         """
-                        // Jika Anda menggunakan Docker Swarm, perintahnya mungkin lebih seperti:
-                        // sh "ssh -i \${SSH_PRIVATE_KEY_FILE} ... ${remoteHost} 'docker stack deploy --compose-file docker-compose.yml --with-registry-auth alifsmart_stack'"
-                        // Pastikan docker-compose.yml Anda sudah ada di server dan dikonfigurasi dengan benar.
                         echo "Deployment commands executed."
                     }
                 }
