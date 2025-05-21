@@ -66,12 +66,13 @@ pipeline {
                     // sh "docker pull aquasec/trivy:${env.TRIVY_VERSION}" 
                     // Biasanya, Docker akan menariknya secara otomatis jika belum ada saat 'docker run'.
 
+
                     echo "Cleaning persistent Trivy cache volume using Trivy ${env.TRIVY_VERSION}..."
-                    sh """
-                        docker run --rm \\
-                            -v trivycache:/root/.cache/ \\
-                            aquasec/trivy:${env.TRIVY_VERSION} clean --all
-                    """
+                        sh """
+                            docker run --rm \\
+                                -v trivycache:/root/.cache/ \\
+                                aquasec/trivy:${env.TRIVY_VERSION} clean 
+                        """ // <-- Removed --all from here
                     echo "Persistent Trivy cache volume 'trivycache' cleaned."
 
                     echo "Scanning image ${fullImageNameForScan} for vulnerabilities with Trivy ${env.TRIVY_VERSION} (without using persistent cache for the scan itself)..."
