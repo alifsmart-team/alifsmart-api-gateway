@@ -119,43 +119,43 @@ pipeline {
             }
         }
 
-                stage('Deploy to Docker Swarm') {
+        stage('Deploy via Docker SSH') {
             steps {
-                echo "Preparing to deploy to Docker Swarm..."
-                // Menggunakan plugin SSH Agent.
-                // Pastikan plugin SSH Agent terinstal dan layanan "OpenSSH Authentication Agent" berjalan di Windows.
-                sshagent(credentials: [env.SWARM_MANAGER_SSH_CREDENTIALS_ID]) {
-                    // Di dalam blok sshagent, kunci SSH dari kredensial env.SWARM_MANAGER_SSH_CREDENTIALS_ID
-                    // akan secara otomatis dimuat dan digunakan oleh perintah ssh/scp.
-                    // Anda tidak perlu lagi merujuk ke file kunci privat secara manual (-i path_ke_kunci).
-                    script {
-                        // Menggunakan SWARM_MANAGER_USER dari environment block.
-                        // Pastikan SWARM_MANAGER_USER sudah didefinisikan dengan benar di blok environment.
-                        if (env.SWARM_MANAGER_USER == null || env.SWARM_MANAGER_USER.trim().isEmpty()) {
-                            error("SWARM_MANAGER_USER environment variable is not set or is empty. Please define it in the environment block (e.g., SWARM_MANAGER_USER = 'root').")
+                script {
+                    // Menggunakan withCredentials dengan sshUserPrivateKey
+                    withCredentials([sshUserPrivateKey(
+                        credentialsId: env.SWARM_MANAGER_SSH_CREDENTIALS_ID, // ID kredensial SSH Anda
+                        keyFileVariable: 'SSH_PRIVATE_KEY_FILE_PATH',     // Variabel untuk path file kunci
+                        usernameVariable: 'SSH_USER_FROM_CRED'          // Variabel untuk username dari kredensial
+                    )]) {
+                        // Pastikan env.SWARM_MANAGER_USER diisi dari SSH_USER_FROM_CRED atau diset manual jika perlu
+                        def sshUser = env.SSH_USER_FROM_CRED
+                        if (sshUser == null || sshUser.trim().isEmpty()) {
+                            // Jika username tidak diset di kredensial, gunakan dari environment atau set default
+                            sshUser = env.SWARM_MANAGER_USER 
+                            if (sshUser == null || sshUser.trim().isEmpty()){
+                                sshUser = 'root' // Fallback terakhir jika tidak ada sama sekali
+                                echo "Warning: SSH Username not found in credentials or environment, defaulting to '${sshUser}'"
+                            }
                         }
-                        def sshUser = env.SWARM_MANAGER_USER
-                        def sshTarget = "${sshUser}@${env.SWARM_MANAGER_IP}" // contoh: root@47.84.46.116
-                        
-                        // Opsi SSH, -i TIDAK DIPERLUKAN lagi karena sshagent
-                        // UserKnownHostsFile=nul adalah untuk Windows agar tidak menanyakan host key.
-                        def sshOpts = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=nul -o LogLevel=ERROR"
-                        
-                        def stackPath = "/opt/stacks/${env.DOCKER_IMAGE_NAME}"
-                        def stackFileNameInRepo = "api-gateway-stack.yml"
-                        def remoteStackFile = "${stackPath}/${stackFileNameInRepo}"
+                        def sshTarget = "${sshUser}@${env.SWARM_MANAGER_IP}"
+                        def stackPath = "/opt/stacks/${env.DOCKER_IMAGE_NAME}" // Path di server remote
+                        def stackFileNameOnRepo = "api-gateway-stack.yml"    // Nama file di workspace Jenkins
+                        def remoteStackFile = "${stackPath}/${stackFileNameOnRepo}"
                         def stackNameInSwarm = "alifsmart_apigw"
 
+                        // Opsi SSH, sekarang menggunakan path file kunci dari variabel
+                        def sshOpts = "-i \"${env.SSH_PRIVATE_KEY_FILE_PATH}\" -o StrictHostKeyChecking=no -o UserKnownHostsFile=nul -o LogLevel=ERROR"
+                        // Catatan: Anda mungkin perlu menangani izin file %SSH_PRIVATE_KEY_FILE_PATH% di Windows.
+                        // Ini sering menyebabkan error "bad permissions".
+
                         echo "Target remote login: ${sshTarget}"
-                        
                         echo "Creating remote directory: ${stackPath}"
-                        // Perintah 'mkdir -p ...' diapit kutip tunggal untuk shell remote Linux.
                         powershell "ssh ${sshOpts} ${sshTarget} 'mkdir -p ${stackPath}'"
                         
-                        echo "Copying local .\\${stackFileNameInRepo} to ${sshTarget}:${remoteStackFile}"
-                        // Menggunakan .\\ untuk path relatif di Windows untuk sumber scp
-                        powershell "scp ${sshOpts} .\\${stackFileNameInRepo} ${sshTarget}:${remoteStackFile}"
-                        
+                        echo "Copying local .\\${stackFileNameOnRepo} to ${sshTarget}:${remoteStackFile}"
+                        powershell "scp ${sshOpts} .\\${stackFileNameOnRepo} ${sshTarget}:${remoteStackFile}"
+
                         echo "Deploying stack ${stackNameInSwarm} on Swarm Manager..."
                         def deployCommandOnRemote = """
                         export DOCKER_HUB_USERNAME='${env.DOCKER_HUB_USERNAME}'; \\
@@ -168,7 +168,6 @@ pipeline {
                         docker stack deploy -c '${remoteStackFile}' '${stackNameInSwarm}' --with-registry-auth --prune
                         """.trim().replaceAll("\\n", " ")
 
-                        // Mengapit seluruh deployCommandOnRemote dengan kutip ganda agar dikirim sebagai satu argumen ke ssh.
                         powershell "ssh ${sshOpts} ${sshTarget} \"${deployCommandOnRemote}\""
                         echo "Deployment to Docker Swarm initiated."
                     }
