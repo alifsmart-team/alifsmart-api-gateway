@@ -174,33 +174,6 @@ pipeline {
         //         }
         //     }
         // }
-        // Jenkinsfile
-pipeline {
-    agent any // Pastikan agent ini memiliki Docker & Git terinstal dan dikonfigurasi dengan benar
-
-    tools {
-        git 'Default'
-    }
-
-    environment {
-        // ... (Variabel environment Anda yang lain tetap sama) ...
-        // Pastikan semua ID kredensial di sini sudah benar:
-        DOCKER_HUB_USERNAME = 'vitoackerman'
-        DOCKER_IMAGE_NAME = 'alifsmart-api-gateway'
-        ENV_REDIS_HOST = credentials('redis_host_anda')
-        ENV_REDIS_PORT = credentials('redis_port_anda')
-        ENV_REDIS_TLS_ENABLED = credentials('redis_tls_is_enabled_anda')
-        SWARM_MANAGER_SSH_CREDENTIALS_ID = 'ssh_credential_id_anda' // ID Kredensial SSH
-        SWARM_MANAGER_IP = '47.84.46.116'
-        SWARM_MANAGER_USER = 'root'
-        DOCKER_HUB_CREDENTIALS_ID = 'docker_credential_id_anda'
-        GITHUB_CREDENTIALS_ID = 'github_pat_anda'
-        TRIVY_VERSION = '0.51.1' // Jika Anda menggunakan ini di tahap Trivy
-    }
-
-    stages {
-        // ... (Tahap Checkout, Install Dependencies & Test, Security Scan, Build & Push diasumsikan sudah OK) ...
-
         stage('Deploy to Docker Swarm (Test SSH Agent)') { // Nama stage diubah untuk menandakan ini tes
             steps {
                 echo "Preparing to deploy to Docker Swarm..."
@@ -243,12 +216,6 @@ pipeline {
                 }
             }
         }
-    } // Akhir stages
-
-    post { 
-        // ... (Blok post Anda tetap sama) ...
-    }
-}
     } // Akhir stages
 
     post { 
