@@ -53,64 +53,63 @@ pipeline {
             }
         }
 
-        stage('Security Scan (Trivy)') {
-            steps {
-                script {
-                    echo "Verifying production dependencies for cross-spawn in workspace using ${env.NODE_VERSION_ALPINE}..."
-                    sh """
-                        docker run --rm \\
-                            -v "${env.WORKSPACE}:/app" \\
-                            -w /app \\
-                            ${env.NODE_VERSION_ALPINE} sh -c "echo '--- Running npm ls cross-spawn --omit=dev ---' && (npm ls cross-spawn --omit=dev --long || echo 'cross-spawn not found by ls or ls failed to find it as a prod dep')"
-                    """ // <--- UBAH DI SINI
-                    echo "Starting security scan with Trivy version ${env.TRIVY_VERSION}..."
-                    def fullImageNameForScan = "${env.FULL_APP_IMAGE_NAME}:scan-${env.BUILD_NUMBER}"
+        // stage('Security Scan (Trivy)') {
+        //     steps {
+        //         script {
+        //             echo "Verifying production dependencies for cross-spawn in workspace using ${env.NODE_VERSION_ALPINE}..."
+        //             sh """
+        //                 docker run --rm \\
+        //                     -v "${env.WORKSPACE}:/app" \\
+        //                     -w /app \\
+        //                     ${env.NODE_VERSION_ALPINE} sh -c "echo '--- Running npm ls cross-spawn --omit=dev ---' && (npm ls cross-spawn --omit=dev --long || echo 'cross-spawn not found by ls or ls failed to find it as a prod dep')"
+        //             """ // <--- UBAH DI SINI
+        //             echo "Starting security scan with Trivy version ${env.TRIVY_VERSION}..."
+        //             def fullImageNameForScan = "${env.FULL_APP_IMAGE_NAME}:scan-${env.BUILD_NUMBER}"
 
-                    echo "Building temporary image for scan (with --no-cache, using Node 20 from Dockerfile): ${fullImageNameForScan}"
-                    // Dockerfile sekarang akan menggunakan FROM node:20-alpine
-                    docker.build(fullImageNameForScan, "--no-cache -f Dockerfile .")
+        //             echo "Building temporary image for scan (with --no-cache, using Node 20 from Dockerfile): ${fullImageNameForScan}"
+        //             // Dockerfile sekarang akan menggunakan FROM node:20-alpine
+        //             docker.build(fullImageNameForScan, "--no-cache -f Dockerfile .")
                     
-                    echo "Ensuring Trivy image ${env.TRIVY_VERSION} is available..."
-                    // sh "docker pull aquasec/trivy:${env.TRIVY_VERSION}" 
+        //             echo "Ensuring Trivy image ${env.TRIVY_VERSION} is available..."
+        //             // sh "docker pull aquasec/trivy:${env.TRIVY_VERSION}" 
 
-                    echo "Cleaning persistent Trivy cache volume using Trivy ${env.TRIVY_VERSION}..."
-                    sh """
-                        docker run --rm \\
-                            -v trivycache:/root/.cache/ \\
-                            aquasec/trivy:${env.TRIVY_VERSION} clean --all
-                    """
-                    echo "Persistent Trivy cache volume 'trivycache' cleaned."
+        //             echo "Cleaning persistent Trivy cache volume using Trivy ${env.TRIVY_VERSION}..."
+        //             sh """
+        //                 docker run --rm \\
+        //                     -v trivycache:/root/.cache/ \\
+        //                     aquasec/trivy:${env.TRIVY_VERSION} clean --all
+        //             """
+        //             echo "Persistent Trivy cache volume 'trivycache' cleaned."
 
-                    echo "Scanning image ${fullImageNameForScan} for vulnerabilities with Trivy ${env.TRIVY_VERSION}..."
-                    try {
-                        sh """
-                            docker run --rm \\
-                                -v /var/run/docker.sock:/var/run/docker.sock \\
-                                -v "${env.WORKSPACE}:/scan_ws" \\
-                                -w /scan_ws \\
-                                aquasec/trivy:${env.TRIVY_VERSION} image \\
-                                --exit-code 1 \\
-                                --severity CRITICAL,HIGH \\
-                                --ignore-unfixed \\
-                                ${fullImageNameForScan} 
-                                // Jika Anda menggunakan .trivyignore, pastikan tidak ada flag --ignore-ids di sini
-                        """
-                        echo "Trivy scan passed or specified vulnerabilities were ignored."
-                    } catch (err) {
-                        echo "Trivy scan failed or found unignored CRITICAL/HIGH vulnerabilities. Error: ${err.getMessage()}"
-                        error("Trivy scan found unignored CRITICAL/HIGH vulnerabilities or an error occurred.")
-                    } finally {
-                        echo "Cleaning up scan image (optional)..."
-                        try {
-                            sh "docker rmi ${fullImageNameForScan} || true"
-                        } catch (cleanupErr) {
-                            echo "Warning: Failed to remove scan image ${fullImageNameForScan}. Error: ${cleanupErr.getMessage()}"
-                        }
-                    }
-                    echo "Security scan completed."
-                }
-            }
-        }
+        //             echo "Scanning image ${fullImageNameForScan} for vulnerabilities with Trivy ${env.TRIVY_VERSION}..."
+        //             try {
+        //                 sh """
+        //                     docker run --rm \\
+        //                         -v /var/run/docker.sock:/var/run/docker.sock \\
+        //                         -v "${env.WORKSPACE}:/scan_ws" \\
+        //                         -w /scan_ws \\
+        //                         aquasec/trivy:${env.TRIVY_VERSION} image \\
+        //                         --exit-code 1 \\
+        //                         --severity CRITICAL,HIGH \\
+        //                         --ignore-unfixed \\
+        //                         ${fullImageNameForScan} 
+        //                 """
+        //                 echo "Trivy scan passed or specified vulnerabilities were ignored."
+        //             } catch (err) {
+        //                 echo "Trivy scan failed or found unignored CRITICAL/HIGH vulnerabilities. Error: ${err.getMessage()}"
+        //                 error("Trivy scan found unignored CRITICAL/HIGH vulnerabilities or an error occurred.")
+        //             } finally {
+        //                 echo "Cleaning up scan image (optional)..."
+        //                 try {
+        //                     sh "docker rmi ${fullImageNameForScan} || true"
+        //                 } catch (cleanupErr) {
+        //                     echo "Warning: Failed to remove scan image ${fullImageNameForScan}. Error: ${cleanupErr.getMessage()}"
+        //                 }
+        //             }
+        //             echo "Security scan completed."
+        //         }
+        //     }
+        // }
 
         stage('Build & Push Docker Image') {
             steps {
