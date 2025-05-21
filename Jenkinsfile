@@ -52,37 +52,19 @@ pipeline {
                     
                     echo "Building temporary image for scan: ${scanImage}"
                     // Menggunakan docker.build dari plugin Docker Pipeline (sudah lintas platform)
-                    // Login mungkin diperlukan jika base image Anda privat, ditangani oleh withRegistry
                     docker.withRegistry('https://index.docker.io/v1/', env.DOCKER_HUB_CREDENTIALS_ID) {
                         docker.build(scanImage, "-f Dockerfile .") 
                         // Tidak perlu push image scan ini ke registry jika hanya untuk scan lokal
                     }
                     
-                    echo "Scanning image ${scanImage} for vulnerabilities using Docker (Trivy v${env.TRIVY_VERSION})..."
-                    // Menggunakan powershell untuk menjalankan Trivy via Docker di Windows
-                    // Path Docker socket untuk Docker Desktop di Windows adalah '//./pipe/docker_engine'
-                    // Interpolasi variabel Groovy ${scanImage} dan ${env.TRIVY_VERSION} ke dalam string perintah PowerShell.
-                    // Tanda kutip ganda di sekitar nilai variabel direkomendasikan.
-                    // Karakter ` (backtick) adalah escape character di PowerShell, digunakan sebelum tanda kutip di dalam string yang juga diapit kutip ganda.
-                    // Atau, kita bisa menggunakan single-quoted string di PowerShell untuk bagian yang tidak perlu ekspansi variabel PowerShell.
-                    
-                    // Opsi 1: Menggunakan string PowerShell multi-baris dengan backtick untuk kelanjutan baris
-                    def trivyScanCmd = """docker run --rm -v '//./pipe/docker_engine:/var/run/docker.sock' `
-                        aquasec/trivy:${env.TRIVY_VERSION} image `
-                        --exit-code 1 `
-                        --severity CRITICAL,HIGH `
-                        --ignore-unfixed `
-                        --ignore-ids CVE-2024-21538 `
-                        "${scanImage}" """ // Mengapit ${scanImage} dengan kutip untuk menangani nama image
-
-                    // Opsi 2: Membangun perintah sebagai satu baris (lebih aman dari masalah line continuation PowerShell)
-                    // def trivyFullCommand = "docker run --rm -v '//./pipe/docker_engine:/var/run/docker.sock' aquasec/trivy:${env.TRIVY_VERSION} image --exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed --ignore-ids CVE-2024-21538 \`"${scanImage}\`""
-                    // Untuk Opsi 2 ini, jika scanImage mengandung karakter khusus, escape dengan backtick mungkin diperlukan untuk PowerShell.
-                    // Lebih aman menggunakan Opsi 1 atau memastikan ${scanImage} tidak punya karakter spesial bagi PowerShell.
-                    // Kita akan tetap dengan Opsi 1 karena lebih mudah dibaca.
+                    echo "Scanning image ${scanImage} for vulnerabilities using locally installed Trivy..."
+                    // Menggunakan powershell untuk menjalankan trivy.exe yang ada di PATH
+                    // Pastikan trivy.exe terinstal dan ada di PATH Windows Anda.
+                    def trivyOptions = "--exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed --ignore-ids CVE-2024-21538"
+                    def trivyScanCommand = "trivy image ${trivyOptions} \`"${scanImage}\`"" // Mengapit ${scanImage} dengan kutip dan escape untuk PowerShell
 
                     try {
-                        powershell trivyScanCmd.trim() // trim() untuk menghapus spasi/newline ekstra
+                        powershell trivyScanCommand.trim()
                         echo "Trivy scan passed or specified vulnerabilities were ignored."
                     } catch (err) {
                         echo "Trivy scan failed or found unignored CRITICAL,HIGH vulnerabilities. Error: ${err.getMessage()}"
@@ -93,7 +75,7 @@ pipeline {
                     echo "Cleaning up scan image (optional)..."
                     try {
                         // Menggunakan powershell untuk docker rmi
-                        powershell "docker rmi \`"${scanImage}\`"" // Mengapit ${scanImage} dengan kutip dan escape untuk PowerShell
+                        powershell "docker rmi \`"${scanImage}\`""
                     } catch (cleanupErr) {
                         echo "Warning: Failed to remove scan image ${scanImage}. Error: ${cleanupErr.getMessage()}"
                     }
