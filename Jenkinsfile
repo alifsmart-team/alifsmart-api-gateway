@@ -43,10 +43,9 @@ pipeline {
         stage('Install Dependencies & Test') {
             steps {
                 echo "Installing dependencies and running tests inside Docker..."
-                // Menggunakan sh untuk menjalankan perintah docker run di Linux
-                // ${env.WORKSPACE} adalah cara standar Jenkins untuk mendapatkan direktori kerja saat ini
-                // Bagian sh -c "..." di dalam container tetap karena container adalah Linux (node:18-alpine)
-                sh 'docker run --rm -v "${env.WORKSPACE}:/app" -w /app node:18-alpine sh -c "npm ci && npm run test -- --passWithNoTests"'
+                // Use double quotes for the sh step to allow Groovy interpolation of ${env.WORKSPACE}.
+                // Use single quotes for the volume mount path and the command passed to sh -c for robustness.
+                sh "docker run --rm -v '${env.WORKSPACE}:/app' -w /app node:18-alpine sh -c 'npm ci && npm run test -- --passWithNoTests'"
                 echo "Dependencies installed and tests completed."
             }
         }
