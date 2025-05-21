@@ -50,9 +50,7 @@ pipeline {
         stage('Install Dependencies & Test') {
             steps {
                 echo "Installing dependencies and running tests inside Docker..."
-                // Menggunakan sh untuk menjalankan di agent Linux
-                // Variabel Redis dari environment Jenkins akan otomatis tersedia di dalam sh block ini.
-                // Kita perlu meneruskannya secara eksplisit ke dalam container Docker.
+                // Menambahkan npm cache clean --force sebelum npm ci
                 sh """
                     docker run --rm \\
                         -v "${env.WORKSPACE}:/app" \\
@@ -60,64 +58,62 @@ pipeline {
                         -e ENV_REDIS_HOST=${env.ENV_REDIS_HOST} \\
                         -e ENV_REDIS_PORT=${env.ENV_REDIS_PORT} \\
                         -e ENV_REDIS_TLS_ENABLED=${env.ENV_REDIS_TLS_ENABLED} \\
-                        node:18-alpine sh -c 'npm ci && npm run test -- --passWithNoTests'
+                        node:18-alpine sh -c 'echo "Cleaning npm cache..." && npm cache clean --force && echo "Running npm ci and tests..." && npm ci && npm run test -- --passWithNoTests'
                 """
                 echo "Dependencies installed and tests completed."
             }
         }
 
         stage('Security Scan (Trivy)') {
-    steps {
-        script {
-            echo "Starting security scan with Trivy..."
-            def fullImageNameForScan = "${env.FULL_APP_IMAGE_NAME}:scan-${env.BUILD_NUMBER}"
+            steps {
+                script {
+                    echo "Starting security scan with Trivy..."
+                    def fullImageNameForScan = "${env.FULL_APP_IMAGE_NAME}:scan-${env.BUILD_NUMBER}"
 
-            echo "Building temporary image for scan: ${fullImageNameForScan}"
-            docker.build(fullImageNameForScan, "-f Dockerfile .")
-            
-            echo "Cleaning persistent Trivy cache volume (if used elsewhere or for general hygiene)..."
-            // Langkah ini membersihkan named volume 'trivycache'.
-            // Ini mungkin tidak berdampak langsung ke scan di bawah jika scan tidak me-mount volume ini,
-            // tapi baik untuk menjaga kebersihan volume 'trivycache' jika ada.
-            sh """
-                docker run --rm \\
-                    -v trivycache:/root/.cache/ \\
-                    aquasec/trivy:latest clean --all
-            """
-            echo "Persistent Trivy cache volume 'trivycache' cleaned."
+                    echo "Building temporary image for scan (with --no-cache): ${fullImageNameForScan}"
+                    // Menambahkan --no-cache untuk memastikan build image bersih dari cache layer Docker
+                    // Ini membantu mengatasi masalah dependensi lama (seperti cross-spawn) yang mungkin masih ada di cache layer
+                    docker.build(fullImageNameForScan, "--no-cache -f Dockerfile .")
+                    
+                    echo "Cleaning persistent Trivy cache volume (if used elsewhere or for general hygiene)..."
+                    sh """
+                        docker run --rm \\
+                            -v trivycache:/root/.cache/ \\
+                            aquasec/trivy:latest clean --all
+                    """
+                    echo "Persistent Trivy cache volume 'trivycache' cleaned."
 
-            echo "Scanning image ${fullImageNameForScan} for vulnerabilities (without using persistent cache for the scan itself)..."
-            try {
-                // Perintah scan sekarang TIDAK me-mount volume 'trivycache'.
-                // Trivy akan mengunduh DB ke cache internal kontainer yang bersifat sementara.
-                sh """
-                    docker run --rm \\
-                        -v /var/run/docker.sock:/var/run/docker.sock \\
-                        -v "${env.WORKSPACE}:/scan_ws" \\
-                        -w /scan_ws \\
-                        aquasec/trivy:latest image \\
-                        --exit-code 1 \\
-                        --severity CRITICAL,HIGH \\
-                        --ignore-unfixed \\
-                        --ignore-ids CVE-2024-21538 \\
-                        ${fullImageNameForScan}
-                """
-                echo "Trivy scan passed or ignored vulnerabilities did not cause failure."
-            } catch (err) {
-                echo "Trivy scan failed or found unignored CRITICAL/HIGH vulnerabilities. Error: ${err.getMessage()}"
-                error("Trivy scan found unignored CRITICAL/HIGH vulnerabilities or an error occurred.")
-            } finally {
-                echo "Cleaning up scan image (optional)..."
-                try {
-                    sh "docker rmi ${fullImageNameForScan} || true"
-                } catch (cleanupErr) {
-                    echo "Warning: Failed to remove scan image ${fullImageNameForScan}. Error: ${cleanupErr.getMessage()}"
+                    echo "Scanning image ${fullImageNameForScan} for vulnerabilities (without using persistent cache for the scan itself)..."
+                    try {
+                        // Perintah scan TIDAK me-mount volume 'trivycache' agar selalu fresh.
+                        sh """
+                            docker run --rm \\
+                                -v /var/run/docker.sock:/var/run/docker.sock \\
+                                -v "${env.WORKSPACE}:/scan_ws" \\
+                                -w /scan_ws \\
+                                aquasec/trivy:latest image \\
+                                --exit-code 1 \\
+                                --severity CRITICAL,HIGH \\
+                                --ignore-unfixed \\
+                                --ignore-ids CVE-2024-21538 \\
+                                ${fullImageNameForScan}
+                        """
+                        echo "Trivy scan passed or ignored vulnerabilities did not cause failure."
+                    } catch (err) {
+                        echo "Trivy scan failed or found unignored CRITICAL/HIGH vulnerabilities. Error: ${err.getMessage()}"
+                        error("Trivy scan found unignored CRITICAL/HIGH vulnerabilities or an error occurred.")
+                    } finally {
+                        echo "Cleaning up scan image (optional)..."
+                        try {
+                            sh "docker rmi ${fullImageNameForScan} || true"
+                        } catch (cleanupErr) {
+                            echo "Warning: Failed to remove scan image ${fullImageNameForScan}. Error: ${cleanupErr.getMessage()}"
+                        }
+                    }
+                    echo "Security scan completed."
                 }
             }
-            echo "Security scan completed."
         }
-    }
-}
 
         stage('Build & Push Docker Image') {
             steps {
@@ -129,16 +125,20 @@ pipeline {
                     docker.withRegistry("https://index.docker.io/v1/", env.DOCKER_HUB_CREDENTIALS_ID) {
                         
                         echo "Building image ${env.FULL_APP_IMAGE_NAME}:${buildTag}..."
+                        // Pertimbangkan untuk menambahkan --no-cache di sini juga jika masalah persistensi dependensi
+                        // masih ada di image final, meskipun build untuk scan sudah --no-cache.
+                        // def customImage = docker.build("${env.FULL_APP_IMAGE_NAME}:${buildTag}", "--no-cache -f Dockerfile .")
                         def customImage = docker.build("${env.FULL_APP_IMAGE_NAME}:${buildTag}", "-f Dockerfile .")
 
+
                         echo "Tagging image ${env.FULL_APP_IMAGE_NAME}:${buildTag} as ${env.FULL_APP_IMAGE_NAME}:${latestTag}..."
-                        customImage.tag(latestTag) // Menambahkan tag 'latest' ke image yang sama
+                        customImage.tag(latestTag)
 
                         echo "Pushing image ${env.FULL_APP_IMAGE_NAME}:${buildTag} to Docker Hub..."
                         customImage.push(buildTag)
                         
                         echo "Pushing image ${env.FULL_APP_IMAGE_NAME}:${latestTag} to Docker Hub..."
-                        customImage.push(latestTag) // Push tag 'latest'
+                        customImage.push(latestTag)
                     }
                     echo "Docker images pushed successfully."
                 }
