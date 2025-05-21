@@ -85,7 +85,7 @@ pipeline {
                                 --exit-code 1 \\
                                 --severity CRITICAL,HIGH \\
                                 --ignore-unfixed \\
-                                --ignorefile ./.trivyignore.yml \\
+                                --ignorefile .trivyignore.yml \\
                                 ${fullImageNameForScan}
                         """
                         // Jika Anda memutuskan untuk menggunakan .trivyignore secara eksklusif,
