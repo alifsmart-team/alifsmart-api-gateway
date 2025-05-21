@@ -91,11 +91,11 @@ pipeline {
                                 -v trivycache:/root/.cache/ \\
                                 -v "${env.WORKSPACE}:/scan_ws" \\
                                 -w /scan_ws \\
-                                aquasec/trivy:0.51.1 image \\
+                                aquasec/trivy:latest image \\
                                 --exit-code 1 \\
                                 --severity CRITICAL,HIGH \\
                                 --ignore-unfixed \\
-                                --ignorefile ./.trivyignore \\ 
+                                --ignorefile .trivyignore \\ 
                                 ${fullImageNameForScan}
                         """
                         echo "Trivy scan passed or ignored vulnerabilities did not cause failure."
