@@ -176,23 +176,21 @@ pipeline {
         // }
         stage('Deploy to Docker Swarm') {
             steps {
-                echo "Preparing to deploy to Docker Swarm..."
-                echo "Attempting to use SSH Agent with credentials ID: ${env.SWARM_MANAGER_SSH_CREDENTIALS_ID}"
-                try {
-                    sshagent(credentials: [env.SWARM_MANAGER_SSH_CREDENTIALS_ID]) {
-                        echo "[SUCCESS] SSH Agent block started. Key should be loaded."
-                        
-                        script {
-                            echo "Inside SSH Agent script block."
+                script { // <-- TAMBAHKAN SCRIPT BLOCK DI SINI untuk membungkus try-catch dan sshagent
+                    echo "Preparing to deploy to Docker Swarm..."
+                    echo "Attempting to use SSH Agent with credentials ID: ${env.SWARM_MANAGER_SSH_CREDENTIALS_ID}"
+                    try {
+                        sshagent(credentials: [env.SWARM_MANAGER_SSH_CREDENTIALS_ID]) {
+                            echo "[SUCCESS] SSH Agent block started. Key should be loaded."
+                            
+                            // Karena kita sudah di dalam script block, tidak perlu script block lagi di sini
+                            // Langsung tulis logika Groovy dan pemanggilan step powershell/echo
                             if (env.SWARM_MANAGER_USER == null || env.SWARM_MANAGER_USER.trim().isEmpty()) {
                                 error("SWARM_MANAGER_USER environment variable is not set or is empty. Please define it in the environment block.")
                             }
                             def sshUser = env.SWARM_MANAGER_USER
                             def sshTarget = "${sshUser}@${env.SWARM_MANAGER_IP}"
-                            
-                            // Opsi SSH: -vvv untuk output sangat verbose dari SSH client
-                            def sshOpts = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=nul -o LogLevel=DEBUG3 -vvv" 
-                            
+                            def sshOpts = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=nul -o LogLevel=VERBOSE"
                             def stackPath = "/opt/stacks/${env.DOCKER_IMAGE_NAME}"
                             def stackFileNameInRepo = "api-gateway-stack.yml"
                             def remoteStackFile = "${stackPath}/${stackFileNameInRepo}"
@@ -201,10 +199,9 @@ pipeline {
                             echo "Target remote login: ${sshTarget}"
                             
                             echo "Attempting simple SSH command (pwd) to verify connection..."
-                            powershell "ssh ${sshOpts} ${sshTarget} 'pwd'" // Perintah sederhana untuk tes koneksi
+                            powershell "ssh ${sshOpts} ${sshTarget} 'pwd'"
                             echo "Simple SSH command 'pwd' executed."
 
-                            // Jika perintah di atas berhasil, baru lanjutkan ke perintah yang lebih kompleks
                             echo "Creating remote directory: ${stackPath}"
                             powershell "ssh ${sshOpts} ${sshTarget} 'mkdir -p ${stackPath}'"
                             
@@ -225,19 +222,18 @@ pipeline {
 
                             powershell "ssh ${sshOpts} ${sshTarget} \"${deployCommandOnRemote}\""
                             echo "Deployment to Docker Swarm initiated."
-                        }
-                        echo "[SUCCESS] SSH Agent script block finished."
+                            echo "[SUCCESS] SSH Agent script logic finished." // Diubah dari "script block"
+                        } // Akhir dari blok sshagent
+                        echo "[SUCCESS] SSH Agent step completed."
+                    } catch (Exception e) {
+                        echo "[ERROR] An error occurred during SSH Agent operation or subsequent steps."
+                        echo "Error Type: ${e.getClass().getName()}"
+                        echo "Error Message: ${e.getMessage()}"
+                        echo "Error Stack Trace (first few lines):"
+                        e.getStackTrace().take(15).each { line -> echo "    at ${line}" }
+                        currentBuild.result = 'FAILURE'
                     }
-                    echo "[SUCCESS] SSH Agent step completed."
-                } catch (Exception e) {
-                    echo "[ERROR] An error occurred during SSH Agent operation or subsequent steps."
-                    echo "Error Type: ${e.getClass().getName()}"
-                    echo "Error Message: ${e.getMessage()}"
-                    echo "Error Stack Trace (first few lines):"
-                    e.getStackTrace().take(15).each { line -> echo "    at ${line}" }
-                    currentBuild.result = 'FAILURE' // Tandai build sebagai gagal
-                    // Anda bisa menambahkan 'throw e' jika ingin pipeline berhenti total dan error lebih terlihat jelas di UI Jenkins
-                }
+                } // Akhir dari script block luar
             }
         }
     } // Akhir stages
