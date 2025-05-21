@@ -82,9 +82,9 @@ pipeline {
                     echo "Scanning image ${fullImageNameForScan} for vulnerabilities..."
                     // Menggunakan Trivy via Docker untuk portabilitas di agent Linux
                     // Pastikan Docker socket di-mount jika Trivy perlu mengakses Docker daemon.
-                    // Variabel trivyScanCommand dipindahkan ke dalam try-catch untuk kejelasan.
                     try {
                         // Menggunakan sh untuk menjalankan perintah Docker Trivy
+                        // Menambahkan --ignore-ids CVE-2024-21538
                         sh """
                             docker run --rm \\
                                 -v /var/run/docker.sock:/var/run/docker.sock \\
@@ -96,7 +96,6 @@ pipeline {
                                 --ignore-ids CVE-2024-21538 \\
                                 ${fullImageNameForScan}
                         """
-                        // --ignore-ids CVE-2024-21538 (Jika masih relevan, tambahkan kembali di atas)
                         echo "Trivy scan passed or ignored vulnerabilities did not cause failure."
                     } catch (err) {
                         echo "Trivy scan failed or found unignored CRITICAL/HIGH vulnerabilities. Error: ${err.getMessage()}"
