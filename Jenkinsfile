@@ -174,97 +174,60 @@ pipeline {
         //         }
         //     }
         // }
-        // stage('Deploy to Docker Swarm') {
-        //     steps {
-        //         script { // <-- TAMBAHKAN SCRIPT BLOCK DI SINI untuk membungkus try-catch dan sshagent
-        //             echo "Preparing to deploy to Docker Swarm..."
-        //             echo "Attempting to use SSH Agent with credentials ID: ${env.SWARM_MANAGER_SSH_CREDENTIALS_ID}"
-        //             try {
-        //                 sshagent(credentials: [env.SWARM_MANAGER_SSH_CREDENTIALS_ID]) {
-        //                     echo "[SUCCESS] SSH Agent block started. Key should be loaded."
-                            
-        //                     // Karena kita sudah di dalam script block, tidak perlu script block lagi di sini
-        //                     // Langsung tulis logika Groovy dan pemanggilan step powershell/echo
-        //                     if (env.SWARM_MANAGER_USER == null || env.SWARM_MANAGER_USER.trim().isEmpty()) {
-        //                         error("SWARM_MANAGER_USER environment variable is not set or is empty. Please define it in the environment block.")
-        //                     }
-        //                     def sshUser = env.SWARM_MANAGER_USER
-        //                     def sshTarget = "${sshUser}@${env.SWARM_MANAGER_IP}"
-        //                     def sshOpts = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=nul -o LogLevel=VERBOSE"
-        //                     def stackPath = "/opt/stacks/${env.DOCKER_IMAGE_NAME}"
-        //                     def stackFileNameInRepo = "api-gateway-stack.yml"
-        //                     def remoteStackFile = "${stackPath}/${stackFileNameInRepo}"
-        //                     def stackNameInSwarm = "alifsmart_apigw"
-
-        //                     echo "Target remote login: ${sshTarget}"
-                            
-        //                     echo "Attempting simple SSH command (pwd) to verify connection..."
-        //                     powershell "ssh ${sshOpts} ${sshTarget} 'pwd'"
-        //                     echo "Simple SSH command 'pwd' executed."
-
-        //                     echo "Creating remote directory: ${stackPath}"
-        //                     powershell "ssh ${sshOpts} ${sshTarget} 'mkdir -p ${stackPath}'"
-                            
-        //                     echo "Copying local .\\${stackFileNameInRepo} to ${sshTarget}:${remoteStackFile}"
-        //                     powershell "scp ${sshOpts} .\\${stackFileNameInRepo} ${sshTarget}:${remoteStackFile}"
-                            
-        //                     echo "Deploying stack ${stackNameInSwarm} on Swarm Manager..."
-        //                     def deployCommandOnRemote = """
-        //                     export DOCKER_HUB_USERNAME='${env.DOCKER_HUB_USERNAME}'; \\
-        //                     export DOCKER_IMAGE_NAME='${env.DOCKER_IMAGE_NAME}'; \\
-        //                     export IMAGE_TAG='latest'; \\
-        //                     export ENV_REDIS_HOST='${env.ENV_REDIS_HOST}'; \\
-        //                     export ENV_REDIS_PORT='${env.ENV_REDIS_PORT}'; \\
-        //                     export ENV_REDIS_TLS_ENABLED='${env.ENV_REDIS_TLS_ENABLED}'; \\
-        //                     echo 'Deploying stack ${stackNameInSwarm}...'; \\
-        //                     docker stack deploy -c '${remoteStackFile}' '${stackNameInSwarm}' --with-registry-auth --prune
-        //                     """.trim().replaceAll("\\n", " ")
-
-        //                     powershell "ssh ${sshOpts} ${sshTarget} \"${deployCommandOnRemote}\""
-        //                     echo "Deployment to Docker Swarm initiated."
-        //                     echo "[SUCCESS] SSH Agent script logic finished." // Diubah dari "script block"
-        //                 } // Akhir dari blok sshagent
-        //                 echo "[SUCCESS] SSH Agent step completed."
-        //             } catch (Exception e) {
-        //                 echo "[ERROR] An error occurred during SSH Agent operation or subsequent steps."
-        //                 echo "Error Type: ${e.getClass().getName()}"
-        //                 echo "Error Message: ${e.getMessage()}"
-        //                 echo "Error Stack Trace (first few lines):"
-        //                 e.getStackTrace().take(15).each { line -> echo "    at ${line}" }
-        //                 currentBuild.result = 'FAILURE'
-        //             }
-        //         } // Akhir dari script block luar
-        //     }
-        // }
-        stage('Test SSH Agent Deploy') {
+        stage('Deploy to Docker Swarm') {
             steps {
                 script {
-                    echo "Preparing to deploy to Docker Swarm..."
-                    echo "Attempting to use SSH Agent with credentials ID: ${env.SWARM_MANAGER_SSH_CREDENTIALS_ID}"
+                    echo "🚀 Starting Docker Swarm deployment..."
+
                     try {
                         sshagent(credentials: [env.SWARM_MANAGER_SSH_CREDENTIALS_ID]) {
-                            echo "[SUCCESS] SSH Agent block started. Key should be loaded."
-                            
-                            if (env.SWARM_MANAGER_USER == null || env.SWARM_MANAGER_USER.trim().isEmpty()) {
-                                error("SWARM_MANAGER_USER environment variable is not set or is empty.")
-                            }
+                            echo "[INFO] SSH Agent started."
+
                             def sshUser = env.SWARM_MANAGER_USER
                             def sshTarget = "${sshUser}@${env.SWARM_MANAGER_IP}"
                             def sshOpts = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=nul -o LogLevel=VERBOSE"
+                            def stackPath = "/opt/stacks/${env.DOCKER_IMAGE_NAME}"
+                            def stackFileNameInRepo = "api-gateway-stack.yml"
+                            def remoteStackFile = "${stackPath}/${stackFileNameInRepo}"
+                            def stackNameInSwarm = "alifsmart_apigw"
 
-                            echo "Attempting simple SSH command (pwd) to: ${sshTarget}"
-                            powershell "ssh ${sshOpts} ${sshTarget} 'pwd'"
-                            echo "[SUCCESS] Simple SSH command 'pwd' executed."
+                            echo "🔍 Verifying SSH connection..."
+                            powershell """
+                                ssh ${sshOpts} ${sshTarget} 'pwd'
+                            """
+
+                            echo "📂 Creating remote directory: ${stackPath}"
+                            powershell """
+                                ssh ${sshOpts} ${sshTarget} 'mkdir -p ${stackPath}'
+                            """
+
+                            echo "📤 Copying stack file to remote..."
+                            powershell """
+                                scp ${sshOpts} .\\${stackFileNameInRepo} ${sshTarget}:${remoteStackFile}
+                            """
+
+                            echo "🐳 Deploying Docker stack '${stackNameInSwarm}'..."
+                            def deployCommandOnRemote = """
+                                export DOCKER_HUB_USERNAME='${env.DOCKER_HUB_USERNAME}'; \\
+                                export DOCKER_IMAGE_NAME='${env.DOCKER_IMAGE_NAME}'; \\
+                                export IMAGE_TAG='latest'; \\
+                                export ENV_REDIS_HOST='${env.ENV_REDIS_HOST}'; \\
+                                export ENV_REDIS_PORT='${env.ENV_REDIS_PORT}'; \\
+                                export ENV_REDIS_TLS_ENABLED='${env.ENV_REDIS_TLS_ENABLED}'; \\
+                                docker stack deploy -c '${remoteStackFile}' '${stackNameInSwarm}' --with-registry-auth --prune
+                            """.trim().replaceAll("\\n", " ")
+
+                            powershell """
+                                ssh ${sshOpts} ${sshTarget} "${deployCommandOnRemote}"
+                            """
+
+                            echo "✅ Deployment finished successfully."
                         }
-                        echo "[SUCCESS] SSH Agent step completed."
                     } catch (Exception e) {
-                        echo "[ERROR] An error occurred during SSH Agent operation or subsequent steps."
-                        echo "Error Type: ${e.getClass().getName()}"
-                        echo "Error Message: ${e.getMessage()}"
-                        // Jika Anda sudah menyetujui signature di Script Approval, baris di bawah akan bekerja
-                        // e.getStackTrace().take(15).each { line -> echo "    at ${line}" }
+                        echo "[❌ ERROR] Deployment failed: ${e.getMessage()}"
+                        e.getStackTrace().take(10).each { line -> echo "    at ${line}" }
                         currentBuild.result = 'FAILURE'
-                        // throw e // Bisa di-uncomment jika ingin pipeline berhenti total
+                        error("Stopping pipeline due to deployment failure.")
                     }
                 }
             }
