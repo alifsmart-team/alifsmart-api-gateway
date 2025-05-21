@@ -246,4 +246,3 @@ pipeline {
             echo "Pipeline gagal! Silakan periksa log untuk detailnya."
         }
     }
-}
