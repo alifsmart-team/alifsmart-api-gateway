@@ -123,7 +123,7 @@ pipeline {
             steps {
                 script {
                     // Ganti dengan ID kredensial SSH private key Anda
-                    withCredentials([sshUserPrivateKey(credentialsId: 'SSH_DEPLOY_CREDENTIALS_ID', keyFileVariable: 'SSH_PRIVATE_KEY_FILE')]) {
+                    withCredentials([sshUserPrivateKey(credentialsId: 'SWARM_MANAGER_SSH_CREDENTIALS_ID', keyFileVariable: 'SSH_PRIVATE_KEY_FILE')]) {
                         echo "Target remote login: ${REMOTE_USER_HOST}"
                         echo "Creating remote directory (if not exists): ${REMOTE_APP_DIR}"
                         // Menggunakan sh bukan powershell
