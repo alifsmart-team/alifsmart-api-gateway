@@ -120,47 +120,48 @@ pipeline {
         }
 
                 stage('Deploy to Docker Swarm') {
-            steps {
-                echo "Preparing to deploy to Docker Swarm..."
-                // Menggunakan plugin SSH Agent
-                sshagent(credentials: [env.SWARM_MANAGER_SSH_CREDENTIALS_ID]) {
-                    // Di dalam blok sshagent, kunci akan dimuat.
-                    // Kita akan menggunakan SWARM_MANAGER_USER dari environment.
-                    script {
-                        def remoteLogin = "${env.SWARM_MANAGER_USER}@${env.SWARM_MANAGER_IP}"
-                        def remoteStackPath = "/opt/stacks/${env.DOCKER_IMAGE_NAME}" 
-                        def stackFileNameInRepo = "api-gateway-stack.yml" 
-                        def stackNameInSwarm = "alifsmart_apigw"
+    steps {
+        script {
+            withCredentials([
+                sshUserPrivateKey(
+                    credentialsId: env.SWARM_MANAGER_SSH_CREDENTIALS_ID,
+                    keyFileVariable: 'SSH_KEY_FILE',
+                    usernameVariable: 'SSH_USERNAME'
+                )
+            ]) {
+                powershell '''
+                    $ErrorActionPreference = 'Stop'
+                    
+                    # Generate unique key file name
+                    $keyPath = Join-Path $env:WORKSPACE "swarm_key.pem"
+                    Copy-Item $env:SSH_KEY_FILE $keyPath
+                    
+                    # Set strict permissions
+                    icacls $keyPath /inheritance:r /grant:r "$env:USERNAME":'(R)'
+                    
+                    # Deploy commands
+                    $sshCommand = @"
+                        docker stack deploy \
+                            -c /opt/stacks/${env.DOCKER_IMAGE_NAME}/api-gateway-stack.yml \
+                            alifsmart_apigw \
+                            --with-registry-auth \
+                            --prune
+"@
 
-                        // Opsi untuk SSH. -i tidak diperlukan lagi karena sshagent
-                        def sshOptions = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=nul"
-
-                        echo "Creating remote directory ${remoteStackPath} on ${remoteLogin}..."
-                        powershell "ssh ${sshOptions} ${remoteLogin} 'mkdir -p ${remoteStackPath}'"
-                        
-                        echo "Copying ${stackFileNameInRepo} to ${remoteLogin}:${remoteStackPath}/${stackFileNameInRepo}..."
-                        powershell "scp ${sshOptions} .\\${stackFileNameInRepo} ${remoteLogin}:${remoteStackPath}/${stackFileNameInRepo}"
-                        
-                        echo "Deploying stack ${stackNameInSwarm} on Swarm Manager ${remoteLogin}..."
-                        def deployCommandOnRemote = """
-                        export DOCKER_HUB_USERNAME='${env.DOCKER_HUB_USERNAME}'; \\
-                        export DOCKER_IMAGE_NAME='${env.DOCKER_IMAGE_NAME}'; \\
-                        export IMAGE_TAG='latest'; \\
-                        export ENV_REDIS_HOST='${env.ENV_REDIS_HOST}'; \\
-                        export ENV_REDIS_PORT='${env.ENV_REDIS_PORT}'; \\
-                        export ENV_REDIS_TLS_ENABLED='${env.ENV_REDIS_TLS_ENABLED}'; \\
-                        echo 'Deploying stack ${stackNameInSwarm} with image ${env.DOCKER_HUB_USERNAME}/${env.DOCKER_IMAGE_NAME}:latest...'; \\
-                        docker stack deploy \\
-                            -c '${remoteStackPath}/${stackFileNameInRepo}' \\
-                            '${stackNameInSwarm}' \\
-                            --with-registry-auth
-                        """
-                        powershell "ssh ${sshOptions} ${remoteLogin} \"${deployCommandOnRemote}\""
-                        echo "Deployment to Docker Swarm initiated."
-                    }
-                }
+                    # Execute SSH
+                    ssh -i "${keyPath}" `
+                        -o StrictHostKeyChecking=no `
+                        -o LogLevel=ERROR `
+                        ${env.SWARM_MANAGER_USER}@${env.SWARM_MANAGER_IP} `
+                        "${sshCommand}"
+                    
+                    # Cleanup
+                    Remove-Item $keyPath -Force
+                '''
             }
         }
+    }
+}
     } // Akhir stages
 
     post { 
