@@ -174,55 +174,81 @@ pipeline {
         //         }
         //     }
         // }
-        stage('Deploy to Docker Swarm') {
+        // Jenkinsfile
+pipeline {
+    agent any // Pastikan agent ini memiliki Docker & Git terinstal dan dikonfigurasi dengan benar
+
+    tools {
+        git 'Default'
+    }
+
+    environment {
+        // ... (Variabel environment Anda yang lain tetap sama) ...
+        // Pastikan semua ID kredensial di sini sudah benar:
+        DOCKER_HUB_USERNAME = 'vitoackerman'
+        DOCKER_IMAGE_NAME = 'alifsmart-api-gateway'
+        ENV_REDIS_HOST = credentials('redis_host_anda')
+        ENV_REDIS_PORT = credentials('redis_port_anda')
+        ENV_REDIS_TLS_ENABLED = credentials('redis_tls_is_enabled_anda')
+        SWARM_MANAGER_SSH_CREDENTIALS_ID = 'ssh_credential_id_anda' // ID Kredensial SSH
+        SWARM_MANAGER_IP = '47.84.46.116'
+        SWARM_MANAGER_USER = 'root'
+        DOCKER_HUB_CREDENTIALS_ID = 'docker_credential_id_anda'
+        GITHUB_CREDENTIALS_ID = 'github_pat_anda'
+        TRIVY_VERSION = '0.51.1' // Jika Anda menggunakan ini di tahap Trivy
+    }
+
+    stages {
+        // ... (Tahap Checkout, Install Dependencies & Test, Security Scan, Build & Push diasumsikan sudah OK) ...
+
+        stage('Deploy to Docker Swarm (Test SSH Agent)') { // Nama stage diubah untuk menandakan ini tes
             steps {
                 echo "Preparing to deploy to Docker Swarm..."
-                sshagent(credentials: [env.SWARM_MANAGER_SSH_CREDENTIALS_ID]) {
-                    // Di dalam blok ini, kunci dari env.SWARM_MANAGER_SSH_CREDENTIALS_ID sudah dimuat ke agen.
-                    // Perintah ssh dan scp akan menggunakan kunci ini secara otomatis.
-                    script {
-                        if (env.SWARM_MANAGER_USER == null || env.SWARM_MANAGER_USER.trim().isEmpty()) {
-                            error("SWARM_MANAGER_USER environment variable is not set or is empty.")
+                echo "Attempting to start SSH Agent with credentials ID: ${env.SWARM_MANAGER_SSH_CREDENTIALS_ID}"
+                try {
+                    sshagent(credentials: [env.SWARM_MANAGER_SSH_CREDENTIALS_ID]) {
+                        // Jika blok ini berhasil dieksekusi, kita akan melihat pesan echo berikut
+                        echo "SSH Agent block started successfully. Kunci SSH seharusnya sudah dimuat."
+                        
+                        script { // Tetap gunakan script block untuk logika Groovy
+                            echo "Inside SSH Agent script block. Testing simple command..."
+                            
+                            // Coba jalankan perintah PowerShell yang sangat sederhana
+                            // yang tidak bergantung pada SSH terlebih dahulu, untuk memastikan
+                            // script block dan powershell step di dalamnya bisa berjalan.
+                            powershell "Write-Host 'PowerShell command inside SSH Agent block executed.'"
+                            
+                            // Jika baris di atas berhasil, baru coba perintah SSH sederhana
+                            if (env.SWARM_MANAGER_USER == null || env.SWARM_MANAGER_USER.trim().isEmpty()) {
+                                error("SWARM_MANAGER_USER environment variable is not set or is empty.")
+                            }
+                            def sshUser = env.SWARM_MANAGER_USER
+                            def sshTarget = "${sshUser}@${env.SWARM_MANAGER_IP}"
+                            def sshOpts = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=nul -o LogLevel=VERBOSE" // VERBOSE untuk debugging SSH
+
+                            echo "Attempting simple SSH command to: ${sshTarget}"
+                            powershell "ssh ${sshOpts} ${sshTarget} 'echo Hello_from_Jenkins_SSH_Agent_on_Swarm_Manager'"
+                            echo "Simple SSH command to Swarm Manager executed."
                         }
-                        def sshUser = env.SWARM_MANAGER_USER
-                        def sshTarget = "${sshUser}@${env.SWARM_MANAGER_IP}"
-                        
-                        // Opsi SSH untuk Windows. -i tidak diperlukan.
-                        // UserKnownHostsFile=nul digunakan untuk melewati pemeriksaan host key.
-                        // Cara yang lebih aman adalah mengelola known_hosts di Windows Anda.
-                        def sshOpts = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=nul -o LogLevel=ERROR"
-                        
-                        def stackPath = "/opt/stacks/${env.DOCKER_IMAGE_NAME}"
-                        def stackFileNameInRepo = "api-gateway-stack.yml"
-                        def remoteStackFile = "${stackPath}/${stackFileNameInRepo}"
-                        def stackNameInSwarm = "alifsmart_apigw"
-
-                        echo "Target remote login: ${sshTarget}"
-                        
-                        echo "Creating remote directory: ${stackPath}"
-                        powershell "ssh ${sshOpts} ${sshTarget} 'mkdir -p ${stackPath}'"
-                        
-                        echo "Copying local .\\${stackFileNameInRepo} to ${sshTarget}:${remoteStackFile}"
-                        powershell "scp ${sshOpts} .\\${stackFileNameInRepo} ${sshTarget}:${remoteStackFile}"
-                        
-                        echo "Deploying stack ${stackNameInSwarm} on Swarm Manager..."
-                        def deployCommandOnRemote = """
-                        export DOCKER_HUB_USERNAME='${env.DOCKER_HUB_USERNAME}'; \\
-                        export DOCKER_IMAGE_NAME='${env.DOCKER_IMAGE_NAME}'; \\
-                        export IMAGE_TAG='latest'; \\
-                        export ENV_REDIS_HOST='${env.ENV_REDIS_HOST}'; \\
-                        export ENV_REDIS_PORT='${env.ENV_REDIS_PORT}'; \\
-                        export ENV_REDIS_TLS_ENABLED='${env.ENV_REDIS_TLS_ENABLED}'; \\
-                        echo 'Deploying stack ${stackNameInSwarm}...'; \\
-                        docker stack deploy -c '${remoteStackFile}' '${stackNameInSwarm}' --with-registry-auth --prune
-                        """.trim().replaceAll("\\n", " ")
-
-                        powershell "ssh ${sshOpts} ${sshTarget} \"${deployCommandOnRemote}\""
-                        echo "Deployment to Docker Swarm initiated."
+                        echo "SSH Agent script block finished."
                     }
+                    echo "SSH Agent step completed."
+                } catch (Exception e) {
+                    echo "ERROR during SSH Agent operation: ${e.getMessage()}"
+                    // Cetak stack trace lengkap dari exception untuk diagnosis lebih lanjut
+                    echo "Full error stack trace: ${e.getStackTrace().join('\n')}"
+                    currentBuild.result = 'FAILURE' // Tandai build sebagai gagal
+                    // Tidak perlu throw e lagi jika sudah ada currentBuild.result = 'FAILURE'
+                    // kecuali jika Anda ingin pipeline berhenti total di sini.
                 }
             }
         }
+    } // Akhir stages
+
+    post { 
+        // ... (Blok post Anda tetap sama) ...
+    }
+}
     } // Akhir stages
 
     post { 
