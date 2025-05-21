@@ -119,45 +119,21 @@ pipeline {
             }
         }
 
-                stage('Deploy to Docker Swarm') {
+                stage('Deploy via Docker SSH') {
     steps {
         script {
-            withCredentials([
-                sshUserPrivateKey(
-                    credentialsId: env.SWARM_MANAGER_SSH_CREDENTIALS_ID,
-                    keyFileVariable: 'SSH_KEY_FILE',
-                    usernameVariable: 'SSH_USERNAME'
-                )
-            ]) {
-                powershell '''
-                    $ErrorActionPreference = 'Stop'
-                    
-                    # Generate unique key file name
-                    $keyPath = Join-Path $env:WORKSPACE "swarm_key.pem"
-                    Copy-Item $env:SSH_KEY_FILE $keyPath
-                    
-                    # Set strict permissions
-                    icacls $keyPath /inheritance:r /grant:r "$env:USERNAME":'(R)'
-                    
-                    # Deploy commands
-                    $sshCommand = @"
-                        docker stack deploy \
-                            -c /opt/stacks/${env.DOCKER_IMAGE_NAME}/api-gateway-stack.yml \
-                            alifsmart_apigw \
-                            --with-registry-auth \
-                            --prune
-"@
-
-                    # Execute SSH
-                    ssh -i "${keyPath}" `
-                        -o StrictHostKeyChecking=no `
-                        -o LogLevel=ERROR `
-                        ${env.SWARM_MANAGER_USER}@${env.SWARM_MANAGER_IP} `
-                        "${sshCommand}"
-                    
-                    # Cleanup
-                    Remove-Item $keyPath -Force
-                '''
+            withCredentials([file(credentialsId: env.SWARM_MANAGER_SSH_CREDENTIALS_ID, variable: 'SSH_KEY')]) {
+                bat """
+                    docker run --rm -v "%SSH_KEY%:/key.pem" ^
+                        alpine/ssh-client ^
+                        sh -c "
+                            chmod 600 /key.pem && \
+                            ssh -i /key.pem \
+                                -o StrictHostKeyChecking=no \
+                                ${env.SWARM_MANAGER_USER}@${env.SWARM_MANAGER_IP} \
+                                'docker stack deploy -c /opt/stacks/${env.DOCKER_IMAGE_NAME}/api-gateway-stack.yml alifsmart_apigw --with-registry-auth'
+                        "
+                """
             }
         }
     }
