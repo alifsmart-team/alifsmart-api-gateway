@@ -174,24 +174,37 @@ pipeline {
         //         }
         //     }
         // }
-        stage('Deploy to Docker Swarm (Test SSH Agent)') {
+        stage('Deploy to Docker Swarm') {
             steps {
                 echo "Preparing to deploy to Docker Swarm..."
-                sshagent(credentials: [env.SWARM_MANAGER_SSH_CREDENTIALS_ID]) {
-                    script {
-                        if (env.SWARM_MANAGER_USER == null || env.SWARM_MANAGER_USER.trim().isEmpty()) {
-                            error("SWARM_MANAGER_USER environment variable is not set or is empty.")
-                        }
-                        def sshUser = env.SWARM_MANAGER_USER
-                        def sshTarget = "${sshUser}@${env.SWARM_MANAGER_IP}"
-                        def sshOpts = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=nul -o LogLevel=VERBOSE" // Gunakan VERBOSE untuk debugging
+                echo "Attempting to use SSH Agent with credentials: ${env.SWARM_MANAGER_SSH_CREDENTIALS_ID}"
+                try {
+                    sshagent(credentials: [env.SWARM_MANAGER_SSH_CREDENTIALS_ID]) {
+                        echo "SSH Agent block started successfully."
+                        script {
+                            // ... (sisa skrip deploy Anda) ...
+                            if (env.SWARM_MANAGER_USER == null || env.SWARM_MANAGER_USER.trim().isEmpty()) {
+                                error("SWARM_MANAGER_USER environment variable is not set or is empty.")
+                            }
+                            def sshUser = env.SWARM_MANAGER_USER
+                            def sshTarget = "${sshUser}@${env.SWARM_MANAGER_IP}"
+                            def sshOpts = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=nul -o LogLevel=ERROR" // LogLevel=VERBOSE atau DEBUG untuk lebih detail
+                            def stackPath = "/opt/stacks/${env.DOCKER_IMAGE_NAME}"
+                            def stackFileNameInRepo = "api-gateway-stack.yml"
+                            def remoteStackFile = "${stackPath}/${stackFileNameInRepo}"
+                            def stackNameInSwarm = "alifsmart_apigw"
 
-                        echo "Attempting simple SSH command to: ${sshTarget}"
-                        // Coba jalankan perintah sederhana di remote server
-                        // Gunakan powershell untuk memanggil ssh.exe
-                        powershell "ssh ${sshOpts} ${sshTarget} 'echo Hello from Jenkins SSH Agent'"
-                        echo "Simple SSH command executed."
+                            echo "Target remote login inside sshagent: ${sshTarget}"
+                            echo "Creating remote directory: ${stackPath}"
+                            powershell "ssh ${sshOpts} ${sshTarget} 'mkdir -p ${stackPath}'"
+                            // ... dst ...
+                        }
+                        echo "SSH Agent block finished."
                     }
+                } catch (Exception e) {
+                    echo "ERROR in SSH Agent block: ${e.getMessage()}"
+                    currentBuild.result = 'FAILURE'
+                    throw e // Gagalkan pipeline agar terlihat jelas
                 }
             }
         }
