@@ -43,10 +43,10 @@ pipeline {
         stage('Install Dependencies & Test') {
             steps {
                 echo "Installing dependencies and running tests inside Docker..."
-                // Menggunakan PowerShell untuk menjalankan perintah docker run
+                // Menggunakan sh (shell) untuk menjalankan perintah docker run di Linux/Unix
                 // Bagian sh -c "..." di dalam container tetap karena container adalah Linux (node:18-alpine)
-                // ${PWD} adalah cara PowerShell untuk mendapatkan direktori kerja saat ini
-                powershell 'docker run --rm -v "${PWD}:/app" -w /app node:18-alpine sh -c "npm ci && npm run test -- --passWithNoTests"'
+                // Menggunakan ${env.WORKSPACE} untuk mereferensikan direktori kerja Jenkins yang utama
+                sh "docker run --rm -v '${env.WORKSPACE}:/app' -w /app node:18-alpine sh -c 'npm ci && npm run test -- --passWithNoTests'"
                 echo "Dependencies installed and tests completed."
             }
         }
