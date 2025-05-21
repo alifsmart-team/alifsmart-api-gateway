@@ -95,7 +95,6 @@ pipeline {
                                 --exit-code 1 \\
                                 --severity CRITICAL,HIGH \\
                                 --ignore-unfixed \\
-                                --ignorefile .trivyignore \\ 
                                 ${fullImageNameForScan}
                         """
                         echo "Trivy scan passed or ignored vulnerabilities did not cause failure."
