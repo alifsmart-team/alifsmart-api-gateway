@@ -274,7 +274,7 @@ pipeline {
                 """.trim().replaceAll("\\n", " ")
 
                 // Pass the remote command string in double quotes to ssh
-                powershell "ssh -i \`"\$env:SSH_PRIVATE_KEY_FILE_PATH\`" ${sshBaseOpts} '${sshTarget}' \`"${deployCommandOnRemote.replace('"', '`"')}\`""
+                powershell "ssh -i \"\$env:SSH_PRIVATE_KEY_FILE_PATH\" ${sshBaseOpts} '${sshTarget}' 'mkdir -p ${stackPath}'"
                 // Note: .replace('"', '`"') in deployCommandOnRemote escapes double quotes for PowerShell, if any are present and needed literally by the remote shell.
                 // If deployCommandOnRemote only uses single quotes internally, this might not be strictly necessary.
 
