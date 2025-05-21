@@ -66,13 +66,12 @@ pipeline {
                     // sh "docker pull aquasec/trivy:${env.TRIVY_VERSION}" 
                     // Biasanya, Docker akan menariknya secara otomatis jika belum ada saat 'docker run'.
 
-
                     echo "Cleaning persistent Trivy cache volume using Trivy ${env.TRIVY_VERSION}..."
-                        sh """
-                            docker run --rm \\
-                                -v trivycache:/root/.cache/ \\
-                                aquasec/trivy:${env.TRIVY_VERSION} image --clear-cache
-                        """ // <-- Removed --all from here
+                    sh """
+                        docker run --rm \\
+                            -v trivycache:/root/.cache/ \\
+                            aquasec/trivy:${env.TRIVY_VERSION} clean --all
+                    """
                     echo "Persistent Trivy cache volume 'trivycache' cleaned."
 
                     echo "Scanning image ${fullImageNameForScan} for vulnerabilities with Trivy ${env.TRIVY_VERSION} (without using persistent cache for the scan itself)..."
@@ -86,7 +85,7 @@ pipeline {
                                 --exit-code 1 \\
                                 --severity CRITICAL,HIGH \\
                                 --ignore-unfixed \\
-                                --ignore-ids CVE-2024-21538 \\
+                                --ignorefile ./.trivyignore.yml \\
                                 ${fullImageNameForScan}
                         """
                         // Jika Anda memutuskan untuk menggunakan .trivyignore secara eksklusif,
