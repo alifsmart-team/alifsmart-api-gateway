@@ -1,6 +1,6 @@
-// Jenkinsfile (Dioptimalkan untuk Agen Ubuntu/Linux)
+// Jenkinsfile
 pipeline {
-    agent any // Pastikan agent ini memiliki Docker & Git terinstal dan dikonfigurasi dengan benar di lingkungan Linux
+    agent any // Pastikan agent ini memiliki Docker & Git terinstal dan dikonfigurasi dengan benar
 
     tools {
         // Nama instalasi Git dari Manage Jenkins > Tools
@@ -43,9 +43,10 @@ pipeline {
         stage('Install Dependencies & Test') {
             steps {
                 echo "Installing dependencies and running tests inside Docker..."
-                // Use double quotes for the sh step to allow Groovy interpolation of ${env.WORKSPACE}.
-                // Use single quotes for the volume mount path and the command passed to sh -c for robustness.
-                sh "docker run --rm -v '${env.WORKSPACE}:/app' -w /app node:18-alpine sh -c 'npm ci && npm run test -- --passWithNoTests'"
+                // Menggunakan PowerShell untuk menjalankan perintah docker run
+                // Bagian sh -c "..." di dalam container tetap karena container adalah Linux (node:18-alpine)
+                // ${PWD} adalah cara PowerShell untuk mendapatkan direktori kerja saat ini
+                powershell 'docker run --rm -v "${PWD}:/app" -w /app node:18-alpine sh -c "npm ci && npm run test -- --passWithNoTests"'
                 echo "Dependencies installed and tests completed."
             }
         }
@@ -57,21 +58,21 @@ pipeline {
                     def fullImageNameForScan = "${env.DOCKER_HUB_USERNAME}/${env.DOCKER_IMAGE_NAME}:scan-${env.BUILD_NUMBER}"
 
                     echo "Building temporary image for scan: ${fullImageNameForScan}"
-                    // docker.build() sudah lintas platform
+                    // docker.build() sudah lintas platform, tidak perlu diubah dari sh/powershell di sini
                     docker.withRegistry('https://index.docker.io/v1/', env.DOCKER_HUB_CREDENTIALS_ID) {
                         def scanImage = docker.build(fullImageNameForScan, "-f Dockerfile .")
                         // Tidak perlu push image scan ini ke registry
                     }
                     
                     echo "Scanning image ${fullImageNameForScan} for vulnerabilities..."
-                    // Menggunakan sh untuk menjalankan Trivy.
-                    // Asumsikan 'trivy' ada di PATH Linux Anda atau gunakan metode Docker-in-Docker untuk Trivy.
+                    // Menggunakan powershell untuk menjalankan Trivy.
+                    // Asumsikan 'trivy.exe' ada di PATH Windows Anda.
                     def trivyScanCommand = "trivy image --exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed --ignore-ids CVE-2024-21538 ${fullImageNameForScan}"
-                    // Jika Anda menjalankan Trivy via Docker (direkomendasikan jika trivy tidak di PATH agen):
+                    // Jika Anda menjalankan Trivy via Docker (direkomendasikan jika trivy.exe tidak di PATH):
                     // trivyScanCommand = "docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image --exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed --ignore-ids CVE-2024-21538 ${fullImageNameForScan}"
                     
                     try {
-                        sh "${trivyScanCommand}"
+                        powershell "${trivyScanCommand}"
                         echo "Trivy scan passed or ignored vulnerabilities did not cause failure."
                     } catch (err) {
                         echo "Trivy scan failed or found unignored CRITICAL/HIGH vulnerabilities. Error: ${err.getMessage()}"
@@ -81,7 +82,7 @@ pipeline {
                     
                     echo "Cleaning up scan image (optional)..."
                     try {
-                        sh "docker rmi ${fullImageNameForScan}"
+                        powershell "docker rmi ${fullImageNameForScan}"
                     } catch (cleanupErr) {
                         echo "Warning: Failed to remove scan image ${fullImageNameForScan}. Error: ${cleanupErr.getMessage()}"
                     }
@@ -121,37 +122,39 @@ pipeline {
         stage('Deploy via Docker SSH') {
             steps {
                 script {
-                    // Tentukan pengguna SSH dari variabel environment.
-                    // Pastikan SWARM_MANAGER_SSH_CREDENTIALS_ID di Jenkins dikonfigurasi
-                    // dengan username yang sama dengan env.SWARM_MANAGER_USER dan private key yang sesuai.
-                    def sshUser = env.SWARM_MANAGER_USER
-                    if (sshUser == null || sshUser.trim().isEmpty()){
-                        sshUser = 'root' // Fallback jika tidak diset di environment
-                        echo "Warning: SWARM_MANAGER_USER tidak diset di environment, menggunakan default '${sshUser}'."
-                    }
-                    def sshTarget = "${sshUser}@${env.SWARM_MANAGER_IP}"
-                    def stackPath = "/opt/stacks/${env.DOCKER_IMAGE_NAME}" // Path di server remote
-                    def stackFileNameOnRepo = "api-gateway-stack.yml"      // Nama file di workspace Jenkins
-                    def remoteStackFile = "${stackPath}/${stackFileNameOnRepo}"
-                    def stackNameInSwarm = "alifsmart_apigw"
+                    // Menggunakan withCredentials dengan sshUserPrivateKey
+                    withCredentials([sshUserPrivateKey(
+                        credentialsId: env.SWARM_MANAGER_SSH_CREDENTIALS_ID, // ID kredensial SSH Anda
+                        keyFileVariable: 'SSH_PRIVATE_KEY_FILE_PATH',     // Variabel untuk path file kunci
+                        usernameVariable: 'SSH_USER_FROM_CRED'          // Variabel untuk username dari kredensial
+                    )]) {
+                        // Pastikan env.SWARM_MANAGER_USER diisi dari SSH_USER_FROM_CRED atau diset manual jika perlu
+                        def sshUser = env.SSH_USER_FROM_CRED
+                        if (sshUser == null || sshUser.trim().isEmpty()) {
+                            // Jika username tidak diset di kredensial, gunakan dari environment atau set default
+                            sshUser = env.SWARM_MANAGER_USER 
+                            if (sshUser == null || sshUser.trim().isEmpty()){
+                                sshUser = 'root' // Fallback terakhir jika tidak ada sama sekali
+                                echo "Warning: SSH Username not found in credentials or environment, defaulting to '${sshUser}'"
+                            }
+                        }
+                        def sshTarget = "${sshUser}@${env.SWARM_MANAGER_IP}"
+                        def stackPath = "/opt/stacks/${env.DOCKER_IMAGE_NAME}" // Path di server remote
+                        def stackFileNameOnRepo = "api-gateway-stack.yml"    // Nama file di workspace Jenkins
+                        def remoteStackFile = "${stackPath}/${stackFileNameOnRepo}"
+                        def stackNameInSwarm = "alifsmart_apigw"
 
-                    // Opsi SSH untuk Linux. Perhatikan bahwa -i <keyfile> sudah tidak diperlukan
-                    // karena ssh-agent yang akan menangani otentikasi kunci.
-                    // PERHATIAN: StrictHostKeyChecking=no dan UserKnownHostsFile=/dev/null
-                    // adalah praktik yang kurang aman untuk produksi. Idealnya, kelola known_hosts Anda.
-                    def sshOpts = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
-
-                    // Menggunakan sshagent untuk membungkus semua operasi SSH
-                    sshagent(credentials: [env.SWARM_MANAGER_SSH_CREDENTIALS_ID]) {
-                        // Di dalam blok sshagent, perintah ssh dan scp akan secara otomatis
-                        // menggunakan kunci yang telah dimuat ke agen.
+                        // Opsi SSH, sekarang menggunakan path file kunci dari variabel
+                        def sshOpts = "-i \"${env.SSH_PRIVATE_KEY_FILE_PATH}\" -o StrictHostKeyChecking=no -o UserKnownHostsFile=nul -o LogLevel=ERROR"
+                        // Catatan: Anda mungkin perlu menangani izin file %SSH_PRIVATE_KEY_FILE_PATH% di Windows.
+                        // Ini sering menyebabkan error "bad permissions".
 
                         echo "Target remote login: ${sshTarget}"
                         echo "Creating remote directory: ${stackPath}"
-                        sh "ssh ${sshOpts} ${sshTarget} 'mkdir -p ${stackPath}'"
+                        powershell "ssh ${sshOpts} ${sshTarget} 'mkdir -p ${stackPath}'"
                         
-                        echo "Copying local ./${stackFileNameOnRepo} to ${sshTarget}:${remoteStackFile}"
-                        sh "scp ${sshOpts} ./${stackFileNameOnRepo} ${sshTarget}:${remoteStackFile}"
+                        echo "Copying local .\\${stackFileNameOnRepo} to ${sshTarget}:${remoteStackFile}"
+                        powershell "scp ${sshOpts} .\\${stackFileNameOnRepo} ${sshTarget}:${remoteStackFile}"
 
                         echo "Deploying stack ${stackNameInSwarm} on Swarm Manager..."
                         def deployCommandOnRemote = """
@@ -165,9 +168,9 @@ pipeline {
                         docker stack deploy -c '${remoteStackFile}' '${stackNameInSwarm}' --with-registry-auth --prune
                         """.trim().replaceAll("\\n", " ")
 
-                        sh "ssh ${sshOpts} ${sshTarget} \"${deployCommandOnRemote}\""
+                        powershell "ssh ${sshOpts} ${sshTarget} \"${deployCommandOnRemote}\""
                         echo "Deployment to Docker Swarm initiated."
-                    } // Akhir dari blok sshagent
+                    }
                 }
             }
         }
