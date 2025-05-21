@@ -127,35 +127,58 @@ pipeline {
                     // Di dalam blok sshagent, kunci akan dimuat.
                     // Kita akan menggunakan SWARM_MANAGER_USER dari environment.
                     script {
-                        def remoteLogin = "${env.SWARM_MANAGER_USER}@${env.SWARM_MANAGER_IP}"
+                        def sshUser = env.SWARM_MANAGER_USER // Ambil dari environment block
+                        if (!sshUser) {
+                             // Fallback jika SWARM_MANAGER_USER tidak diset di environment.
+                             // Pastikan ini user yang benar untuk SSH ke Swarm Manager Anda.
+                            sshUser = 'root' 
+                            echo "Warning: SWARM_MANAGER_USER not defined in environment, defaulting to '${sshUser}'. Please define it for clarity."
+                        }
+
+                        def remoteLogin = "${sshUser}@${env.SWARM_MANAGER_IP}"
                         def remoteStackPath = "/opt/stacks/${env.DOCKER_IMAGE_NAME}" 
                         def stackFileNameInRepo = "api-gateway-stack.yml" 
                         def stackNameInSwarm = "alifsmart_apigw"
 
                         // Opsi untuk SSH. -i tidak diperlukan lagi karena sshagent
+                        // Path ke file kunci privat tidak lagi dirujuk secara manual di sini.
                         def sshOptions = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=nul"
 
                         echo "Creating remote directory ${remoteStackPath} on ${remoteLogin}..."
-                        powershell "ssh ${sshOptions} ${remoteLogin} 'mkdir -p ${remoteStackPath}'"
+                        // Menggunakan bat untuk memanggil ssh.exe
+                        // Perintah remote 'mkdir -p ...' diapit kutip tunggal untuk shell remote (Linux)
+                        bat "ssh ${sshOptions} ${remoteLogin} \"mkdir -p ${remoteStackPath}\""
                         
                         echo "Copying ${stackFileNameInRepo} to ${remoteLogin}:${remoteStackPath}/${stackFileNameInRepo}..."
-                        powershell "scp ${sshOptions} .\\${stackFileNameInRepo} ${remoteLogin}:${remoteStackPath}/${stackFileNameInRepo}"
+                        // Menggunakan bat untuk memanggil scp.exe
+                        // .\\ untuk path relatif di Windows
+                        bat "scp ${sshOptions} .\\${stackFileNameInRepo} ${remoteLogin}:${remoteStackPath}/${stackFileNameInRepo}"
                         
                         echo "Deploying stack ${stackNameInSwarm} on Swarm Manager ${remoteLogin}..."
-                        def deployCommandOnRemote = """
-                        export DOCKER_HUB_USERNAME='${env.DOCKER_HUB_USERNAME}'; \\
-                        export DOCKER_IMAGE_NAME='${env.DOCKER_IMAGE_NAME}'; \\
-                        export IMAGE_TAG='latest'; \\
-                        export ENV_REDIS_HOST='${env.ENV_REDIS_HOST}'; \\
-                        export ENV_REDIS_PORT='${env.ENV_REDIS_PORT}'; \\
-                        export ENV_REDIS_TLS_ENABLED='${env.ENV_REDIS_TLS_ENABLED}'; \\
-                        echo 'Deploying stack ${stackNameInSwarm} with image ${env.DOCKER_HUB_USERNAME}/${env.DOCKER_IMAGE_NAME}:latest...'; \\
-                        docker stack deploy \\
-                            -c '${remoteStackPath}/${stackFileNameInRepo}' \\
-                            '${stackNameInSwarm}' \\
-                            --with-registry-auth
-                        """
-                        powershell "ssh ${sshOptions} ${remoteLogin} \"${deployCommandOnRemote}\""
+                        // Perintah deployCommandOnRemote akan dieksekusi di shell Linux remote server.
+                        // Kita buat menjadi satu baris dengan mengganti newline dengan '; ' agar lebih aman untuk bat
+                        // Atau kita bisa mencoba mengirimnya sebagai string multi-baris jika ssh client & server menanganinya dengan baik.
+                        // Untuk bat, mengirim string multi-baris yang sangat panjang bisa tricky.
+                        // Alternatif: simpan deployCommandOnRemote ke file .sh lalu scp dan eksekusi file .sh tersebut.
+                        // Untuk sekarang, kita coba kirim langsung.
+                        
+                        // Variabel environment yang akan diekspor di remote
+                        def remoteExports = "export DOCKER_HUB_USERNAME='${env.DOCKER_HUB_USERNAME}'; " +
+                                            "export DOCKER_IMAGE_NAME='${env.DOCKER_IMAGE_NAME}'; " +
+                                            "export IMAGE_TAG='latest'; " +
+                                            "export ENV_REDIS_HOST='${env.ENV_REDIS_HOST}'; " +
+                                            "export ENV_REDIS_PORT='${env.ENV_REDIS_PORT}'; " +
+                                            "export ENV_REDIS_TLS_ENABLED='${env.ENV_REDIS_TLS_ENABLED}'; "
+                        
+                        def remoteDockerCommand = "echo 'Deploying stack ${stackNameInSwarm} with image ${env.DOCKER_HUB_USERNAME}/${env.DOCKER_IMAGE_NAME}:latest...'; " +
+                                                  "docker stack deploy -c '${remoteStackPath}/${stackFileNameInRepo}' '${stackNameInSwarm}' --with-registry-auth"
+
+                        // Gabungkan semua perintah remote menjadi satu string, dipisahkan oleh '&&' atau ';'
+                        // Penggunaan kutip ganda di sekitar keseluruhan perintah untuk ssh sangat penting.
+                        def fullRemoteCommand = "${remoteExports} ${remoteDockerCommand}"
+
+                        // Menggunakan bat untuk memanggil ssh.exe dengan perintah yang sudah diformat
+                        bat "ssh ${sshOptions} ${remoteLogin} \"${fullRemoteCommand}\""
                         echo "Deployment to Docker Swarm initiated."
                     }
                 }
