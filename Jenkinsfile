@@ -209,18 +209,16 @@ pipeline {
 
                         // LANGKAH KRITIS: Mencoba mengatur izin file kunci di Windows
                         echo "Attempting to set secure permissions for SSH key file: ${windowsSshKeyPath}"
-                        powershell """
-                            # Hapus semua izin yang diwariskan agar kita bisa mengatur izin secara eksplisit
-                            icacls '${windowsSshKeyPath}' /inheritance:r
-                            # Berikan Full Control hanya ke user yang menjalankan Jenkins saat ini
-                            # dan ke user SYSTEM (seringkali diperlukan untuk operasi sistem)
-                            icacls '${windowsSshKeyPath}' /grant '${env:USERNAME}:(F)'
-                            icacls '${windowsSshKeyPath}' /grant 'SYSTEM:(F)'
-                            # (Opsional) Coba hapus izin untuk grup 'Users' jika itu penyebab "too open"
-                            # Perintah ini mungkin gagal jika grup 'Users' tidak memiliki izin eksplisit, jadi kita abaikan errornya.
-                            icacls '${windowsSshKeyPath}' /remove:g 'BUILTIN\\Users' /T /C /Q *>$null
+                        try {
+                            powershell "icacls \`"${windowsSshKeyPath}\`" /inheritance:r"
+                            powershell "icacls \`"${windowsSshKeyPath}\`" /grant \`"${env:USERNAME}\`":(F)"
+                            powershell "icacls \`"${windowsSshKeyPath}\`" /grant \`"SYSTEM\`":(F)"
+                            // Perbaikan: Gunakan Out-Null untuk menekan output
+                            powershell "icacls \`"${windowsSshKeyPath}\`" /remove:g \`"BUILTIN\\Users\`" /T /C /Q | Out-Null"
                             echo 'Permissions set (or attempted) for SSH key file.'
-                        """
+                        } catch (permErr) {
+                            echo "Warning: Failed to set permissions on SSH key file. SSH might still fail. Error: ${permErr.getMessage()}"
+                        }
                         
                         // Opsi SSH, menggunakan path file kunci yang sudah di-format untuk Windows
                         // Quoting dengan backtick `"` penting untuk PowerShell jika path mengandung spasi
