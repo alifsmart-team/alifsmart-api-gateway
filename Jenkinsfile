@@ -89,11 +89,13 @@ pipeline {
                             docker run --rm \\
                                 -v /var/run/docker.sock:/var/run/docker.sock \\
                                 -v trivycache:/root/.cache/ \\
-                                aquasec/trivy:latest image \\
+                                -v "${env.WORKSPACE}:/scan_ws" \\
+                                -w /scan_ws \\
+                                aquasec/trivy:0.51.1 image \\
                                 --exit-code 1 \\
                                 --severity CRITICAL,HIGH \\
                                 --ignore-unfixed \\
-                                --ignore-ids CVE-2024-21538 \\
+                                --ignorefile ./.trivyignore \\ 
                                 ${fullImageNameForScan}
                         """
                         echo "Trivy scan passed or ignored vulnerabilities did not cause failure."
