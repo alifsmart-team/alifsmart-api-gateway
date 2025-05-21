@@ -175,99 +175,82 @@ pipeline {
         //     }
         // }
         stage('Deploy via Docker SSH using bat and sshagent') {
-    agent any // Pastikan agent Anda memiliki Git (untuk ssh.exe & scp.exe) di PATH
+            steps {
+                // Pastikan env.SWARM_MANAGER_SSH_CREDENTIALS_ID merujuk pada Jenkins credential
+                // bertipe "SSH Username with private key". Username untuk koneksi SSH
+                // diambil dari konfigurasi credential tersebut.
+                sshagent(credentials: [env.SWARM_MANAGER_SSH_CREDENTIALS_ID]) {
+                    script {
+                        // Ambil variabel dari environment untuk kejelasan
+                        def swarmManagerIp = env.SWARM_MANAGER_IP
+                        def dockerImageName = env.DOCKER_IMAGE_NAME
+                        def dockerHubUsername = env.DOCKER_HUB_USERNAME
+                        def redisHost = env.ENV_REDIS_HOST
+                        def redisPort = env.ENV_REDIS_PORT
+                        def redisTlsEnabled = env.ENV_REDIS_TLS_ENABLED
+                        def stackFileName = env.STACK_FILE_NAME ?: "api-gateway-stack.yml" // Default jika tidak diset di env
+                        def dockerStackName = env.DOCKER_STACK_NAME ?: "alifsmart_apigw"   // Default jika tidak diset di env
 
-    environment {
-        // Pastikan variabel-variabel ini tersedia di environment Jenkins Job Anda
-        // atau didefinisikan secara global.
-        // Contoh:
-        // SWARM_MANAGER_IP = '192.168.1.100'
-        // SWARM_MANAGER_SSH_CREDENTIALS_ID = 'id-kredensial-ssh-swarm-manager'
-        // DOCKER_IMAGE_NAME = 'nama-image-docker-saya'
-        // DOCKER_HUB_USERNAME = 'username-dockerhub-saya'
-        // ENV_REDIS_HOST = 'redis.internal'
-        // ENV_REDIS_PORT = '6379'
-        // ENV_REDIS_TLS_ENABLED = 'false'
-        // STACK_FILE_NAME = 'api-gateway-stack.yml' // Bisa juga dari env
-        // DOCKER_STACK_NAME = 'alifsmart_apigw'     // Bisa juga dari env
-    }
+                        // Validasi variabel penting
+                        if (!swarmManagerIp) {
+                            error "SWARM_MANAGER_IP environment variable is not set."
+                        }
+                        if (!dockerImageName) {
+                            error "DOCKER_IMAGE_NAME environment variable is not set."
+                        }
+                        if (!dockerHubUsername) {
+                            error "DOCKER_HUB_USERNAME environment variable is not set."
+                        }
 
-    steps {
-        // Pastikan env.SWARM_MANAGER_SSH_CREDENTIALS_ID merujuk pada Jenkins credential
-        // bertipe "SSH Username with private key". Username untuk koneksi SSH
-        // diambil dari konfigurasi credential tersebut.
-        sshagent(credentials: [env.SWARM_MANAGER_SSH_CREDENTIALS_ID]) {
-            script {
-                // Ambil variabel dari environment untuk kejelasan
-                def swarmManagerIp = env.SWARM_MANAGER_IP
-                def dockerImageName = env.DOCKER_IMAGE_NAME
-                def dockerHubUsername = env.DOCKER_HUB_USERNAME
-                def redisHost = env.ENV_REDIS_HOST
-                def redisPort = env.ENV_REDIS_PORT
-                def redisTlsEnabled = env.ENV_REDIS_TLS_ENABLED
-                def stackFileName = env.STACK_FILE_NAME ?: "api-gateway-stack.yml" // Default jika tidak diset di env
-                def dockerStackName = env.DOCKER_STACK_NAME ?: "alifsmart_apigw"   // Default jika tidak diset di env
+                        def remoteStackDir = "/opt/stacks/${dockerImageName}"
+                        def remoteStackFilePath = "${remoteStackDir}/${stackFileName}"
 
-                // Validasi variabel penting
-                if (!swarmManagerIp) {
-                    error "SWARM_MANAGER_IP environment variable is not set."
+                        // Opsi SSH: -i tidak diperlukan dengan sshagent
+                        // UserKnownHostsFile=/dev/null biasanya bekerja dengan ssh.exe dari Git Bash
+                        // Jika gagal, coba UserKnownHostsFile=nul
+                        def sshOpts = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
+
+                        echo "Target remote host: ${swarmManagerIp} (username from credential '${env.SWARM_MANAGER_SSH_CREDENTIALS_ID}')"
+
+                        echo "Creating remote directory: ${remoteStackDir}"
+                        // Perintah mkdir -p aman dijalankan berkali-kali
+                        bat "ssh ${sshOpts} ${swarmManagerIp} \"mkdir -p ${remoteStackDir}\""
+
+                        echo "Copying local .\\${stackFileName} to ${swarmManagerIp}:${remoteStackFilePath}"
+                        // Menggunakan tanda kutip untuk menangani spasi pada path jika ada (meskipun tidak direkomendasikan)
+                        // Pastikan file ${stackFileName} ada di root workspace Jenkins
+                        bat "scp ${sshOpts} \"${stackFileName}\" \"${swarmManagerIp}:${remoteStackFilePath}\""
+
+                        echo "Deploying stack ${dockerStackName} on Swarm Manager..."
+                        // Bangun perintah deploy untuk server remote
+                        // Variabel Groovy diinterpolasi SEBELUM dikirim ke bat
+                        // Tanda kutip tunggal ('') di dalam perintah adalah untuk shell di server remote
+                        def deployCommandOnRemote = """
+                        export DOCKER_HUB_USERNAME='${dockerHubUsername}'; \\
+                        export DOCKER_IMAGE_NAME='${dockerImageName}'; \\
+                        export IMAGE_TAG='latest'; \\
+                        export ENV_REDIS_HOST='${redisHost}'; \\
+                        export ENV_REDIS_PORT='${redisPort}'; \\
+                        export ENV_REDIS_TLS_ENABLED='${redisTlsEnabled}'; \\
+                        echo 'Deploying stack ${dockerStackName} with image ${dockerHubUsername}/${dockerImageName}:latest...'; \\
+                        docker stack deploy -c '${remoteStackFilePath}' '${dockerStackName}' --with-registry-auth --prune
+                        """.trim().replaceAll("\\n", " ") // Hapus newline dan ganti dengan spasi agar jadi satu baris perintah
+
+                        // Eksekusi perintah deploy di server remote
+                        // Seluruh deployCommandOnRemote diapit "" untuk ssh, yang mana aman karena
+                        // di dalamnya menggunakan '' untuk string shell remote.
+                        bat "ssh ${sshOpts} ${swarmManagerIp} \"${deployCommandOnRemote}\""
+
+                        echo "Deployment to Docker Swarm initiated for stack: ${dockerStackName}."
+                    }
                 }
-                if (!dockerImageName) {
-                    error "DOCKER_IMAGE_NAME environment variable is not set."
+            }
+            post {
+                always {
+                    echo "Finished Deploy via Docker SSH stage."
                 }
-                if (!dockerHubUsername) {
-                    error "DOCKER_HUB_USERNAME environment variable is not set."
-                }
-
-                def remoteStackDir = "/opt/stacks/${dockerImageName}"
-                def remoteStackFilePath = "${remoteStackDir}/${stackFileName}"
-
-                // Opsi SSH: -i tidak diperlukan dengan sshagent
-                // UserKnownHostsFile=/dev/null biasanya bekerja dengan ssh.exe dari Git Bash
-                // Jika gagal, coba UserKnownHostsFile=nul
-                def sshOpts = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
-
-                echo "Target remote host: ${swarmManagerIp} (username from credential '${env.SWARM_MANAGER_SSH_CREDENTIALS_ID}')"
-
-                echo "Creating remote directory: ${remoteStackDir}"
-                // Perintah mkdir -p aman dijalankan berkali-kali
-                bat "ssh ${sshOpts} ${swarmManagerIp} \"mkdir -p ${remoteStackDir}\""
-
-                echo "Copying local .\\${stackFileName} to ${swarmManagerIp}:${remoteStackFilePath}"
-                // Menggunakan tanda kutip untuk menangani spasi pada path jika ada (meskipun tidak direkomendasikan)
-                // Pastikan file ${stackFileName} ada di root workspace Jenkins
-                bat "scp ${sshOpts} \"${stackFileName}\" \"${swarmManagerIp}:${remoteStackFilePath}\""
-
-                echo "Deploying stack ${dockerStackName} on Swarm Manager..."
-                // Bangun perintah deploy untuk server remote
-                // Variabel Groovy diinterpolasi SEBELUM dikirim ke bat
-                // Tanda kutip tunggal ('') di dalam perintah adalah untuk shell di server remote
-                def deployCommandOnRemote = """
-                export DOCKER_HUB_USERNAME='${dockerHubUsername}'; \\
-                export DOCKER_IMAGE_NAME='${dockerImageName}'; \\
-                export IMAGE_TAG='latest'; \\
-                export ENV_REDIS_HOST='${redisHost}'; \\
-                export ENV_REDIS_PORT='${redisPort}'; \\
-                export ENV_REDIS_TLS_ENABLED='${redisTlsEnabled}'; \\
-                echo 'Deploying stack ${dockerStackName} with image ${dockerHubUsername}/${dockerImageName}:latest...'; \\
-                docker stack deploy -c '${remoteStackFilePath}' '${dockerStackName}' --with-registry-auth --prune
-                """.trim().replaceAll("\\n", " ") // Hapus newline dan ganti dengan spasi agar jadi satu baris perintah
-
-                // Eksekusi perintah deploy di server remote
-                // Seluruh deployCommandOnRemote diapit "" untuk ssh, yang mana aman karena
-                // di dalamnya menggunakan '' untuk string shell remote.
-                bat "ssh ${sshOpts} ${swarmManagerIp} \"${deployCommandOnRemote}\""
-
-                echo "Deployment to Docker Swarm initiated for stack: ${dockerStackName}."
             }
         }
-    }
-    post {
-        always {
-            echo "Finished Deploy via Docker SSH stage."
-        }
-    }
-}
     } // Akhir stages
 
     post { 
