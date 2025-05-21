@@ -49,6 +49,8 @@
     "pretty-format": "27.5.1",
     "rate-limit-redis": "^4.2.0",
     "rate-limiter-flexible": "^7.1.0",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
     "react-is": "17.0.2",
     "redis": "^5.0.1",
     "scheduler": "0.26.0"
