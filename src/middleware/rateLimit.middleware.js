@@ -1,7 +1,7 @@
 // middlewares/rateLimitMiddleware.js
 import rateLimit from 'express-rate-limit';
 import RedisStore from 'rate-limit-redis';
-import { redisClient, connectRedis } from '../services/redisClient.js';
+import { redisClient, connectRedis } from '../services/cache.service.js';
 import appConfig from '../config/index.js';
 
 // Pastikan redis terkoneksi sebelum store dibuat

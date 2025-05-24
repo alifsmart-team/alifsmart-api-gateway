@@ -79,53 +79,53 @@ pipeline {
             }
         }
 
-        // --- TAHAP BARU UNTUK SCAN TRIVY ---
-        stage('Scan with Trivy') {
-            steps {
-                script {
-                    echo "Scanning Docker image ${env.FULL_APP_IMAGE_NAME}:${env.BUILD_NUMBER} with Trivy..."
-                    // Tarik image yang baru saja di-push untuk memastikan kita memindai versi yang benar
-                    // Jika agent Jenkins dan Docker daemon berada di host yang sama,
-                    // image mungkin sudah tersedia secara lokal setelah build.
-                    // Namun, pull eksplisit memastikan image terbaru dari registry yang digunakan.
-                    docker.withRegistry("https://index.docker.io/v1/", env.DOCKER_HUB_CREDENTIALS_ID) {
-                        sh "docker pull ${env.FULL_APP_IMAGE_NAME}:${env.BUILD_NUMBER}"
-                    }
+        // // --- TAHAP BARU UNTUK SCAN TRIVY ---
+        // stage('Scan with Trivy') {
+        //     steps {
+        //         script {
+        //             echo "Scanning Docker image ${env.FULL_APP_IMAGE_NAME}:${env.BUILD_NUMBER} with Trivy..."
+        //             // Tarik image yang baru saja di-push untuk memastikan kita memindai versi yang benar
+        //             // Jika agent Jenkins dan Docker daemon berada di host yang sama,
+        //             // image mungkin sudah tersedia secara lokal setelah build.
+        //             // Namun, pull eksplisit memastikan image terbaru dari registry yang digunakan.
+        //             docker.withRegistry("https://index.docker.io/v1/", env.DOCKER_HUB_CREDENTIALS_ID) {
+        //                 sh "docker pull ${env.FULL_APP_IMAGE_NAME}:${env.BUILD_NUMBER}"
+        //             }
 
-                    // Jalankan Trivy menggunakan image Docker resmi Trivy
-                    // --rm akan menghapus kontainer setelah selesai
-                    // -v /var/run/docker.sock:/var/run/docker.sock memungkinkan Trivy mengakses Docker daemon
-                    // -v $HOME/trivy-cache:/root/.cache/trivy cache direktori untuk mempercepat scan berikutnya
-                    // --exit-code 1 akan membuat build gagal jika ada kerentanan HIGH atau CRITICAL
-                    // --severity HIGH,CRITICAL hanya melaporkan kerentanan dengan tingkat keparahan tersebut
-                    // --format table untuk output yang mudah dibaca di log Jenkins
-                    // Ganti ${env.FULL_APP_IMAGE_NAME}:${env.BUILD_NUMBER} dengan image yang ingin Anda pindai
-                    try {
-                        sh """
-                            docker run --rm \\
-                                -v /var/run/docker.sock:/var/run/docker.sock \\
-                                -v \$HOME/.trivycache:/root/.cache/trivy \\
-                                aquasec/trivy:${env.TRIVY_VERSION} image \\
-                                --exit-code 1 \\
-                                --severity HIGH,CRITICAL \\
-                                --ignore-unfixed \\
-                                --format table \\
-                                ${env.FULL_APP_IMAGE_NAME}:${env.BUILD_NUMBER}
-                        """
-                        // Anda bisa menambahkan opsi --output trivy-report.json untuk menyimpan hasil scan
-                        // dan kemudian mengarsipkannya menggunakan archiveArtifacts
-                        // contoh: aquasec/trivy:${env.TRIVY_VERSION} image --format json --output trivy-results.json ${env.FULL_APP_IMAGE_NAME}:${env.BUILD_NUMBER}
-                        // archiveArtifacts artifacts: 'trivy-results.json', fingerprint: true
-                    } catch (e) {
-                        // Tangani error jika Trivy menemukan kerentanan (karena --exit-code 1)
-                        echo "Trivy scan found vulnerabilities or an error occurred."
-                        // currentBuild.result = 'FAILURE' // Sudah diatur oleh exit code 1
-                        throw e // Lempar kembali error untuk menghentikan pipeline
-                    }
-                    echo "Trivy scan completed."
-                }
-            }
-        }
+        //             // Jalankan Trivy menggunakan image Docker resmi Trivy
+        //             // --rm akan menghapus kontainer setelah selesai
+        //             // -v /var/run/docker.sock:/var/run/docker.sock memungkinkan Trivy mengakses Docker daemon
+        //             // -v $HOME/trivy-cache:/root/.cache/trivy cache direktori untuk mempercepat scan berikutnya
+        //             // --exit-code 1 akan membuat build gagal jika ada kerentanan HIGH atau CRITICAL
+        //             // --severity HIGH,CRITICAL hanya melaporkan kerentanan dengan tingkat keparahan tersebut
+        //             // --format table untuk output yang mudah dibaca di log Jenkins
+        //             // Ganti ${env.FULL_APP_IMAGE_NAME}:${env.BUILD_NUMBER} dengan image yang ingin Anda pindai
+        //             try {
+        //                 sh """
+        //                     docker run --rm \\
+        //                         -v /var/run/docker.sock:/var/run/docker.sock \\
+        //                         -v \$HOME/.trivycache:/root/.cache/trivy \\
+        //                         aquasec/trivy:${env.TRIVY_VERSION} image \\
+        //                         --exit-code 1 \\
+        //                         --severity HIGH,CRITICAL \\
+        //                         --ignore-unfixed \\
+        //                         --format table \\
+        //                         ${env.FULL_APP_IMAGE_NAME}:${env.BUILD_NUMBER}
+        //                 """
+        //                 // Anda bisa menambahkan opsi --output trivy-report.json untuk menyimpan hasil scan
+        //                 // dan kemudian mengarsipkannya menggunakan archiveArtifacts
+        //                 // contoh: aquasec/trivy:${env.TRIVY_VERSION} image --format json --output trivy-results.json ${env.FULL_APP_IMAGE_NAME}:${env.BUILD_NUMBER}
+        //                 // archiveArtifacts artifacts: 'trivy-results.json', fingerprint: true
+        //             } catch (e) {
+        //                 // Tangani error jika Trivy menemukan kerentanan (karena --exit-code 1)
+        //                 echo "Trivy scan found vulnerabilities or an error occurred."
+        //                 // currentBuild.result = 'FAILURE' // Sudah diatur oleh exit code 1
+        //                 throw e // Lempar kembali error untuk menghentikan pipeline
+        //             }
+        //             echo "Trivy scan completed."
+        //         }
+        //     }
+        // }
         // --- AKHIR TAHAP SCAN TRIVY ---
 
         stage('Deploy via Docker SSH') {

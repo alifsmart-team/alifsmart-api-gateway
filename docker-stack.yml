@@ -4,7 +4,7 @@ services:
   api-gateway:
     image: vitoackerman/alifsmart-api-gateway:latest # Pertimbangkan pake tag spesifik, bukan latest
     ports:
-      - "80:3000"
+      - "8081:3000"
     environment:
       NODE_ENV: production
       PORT: 3000
